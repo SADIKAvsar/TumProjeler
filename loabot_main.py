@@ -263,48 +263,88 @@ class LoABot:
             self.log(f"{boss_adi} manuel ayarlandi: {st_str}")
             self.gui_queue.put(("set_spawn", (boss_adi, ts, source)))
 
-    def _run_sequence(self, sequence: list, coords: dict, context_target=None) -> bool:
+    def _normalize_action_name(self, action) -> str:
+        name = str(action or "").strip().lower()
+        aliases = {
+            "clcik": "click",
+            "katman_secimi": "katman_secimi",
+            "katman_seçimi": "katman_secimi",
+            "katman_seã§imi": "katman_secimi",
+            "boss_secimi": "boss_secimi",
+            "boss_seçimi": "boss_secimi",
+            "boss_seã§imi": "boss_secimi",
+        }
+        return aliases.get(name, name)
+
+    def _run_sequence(self, sequence: list, coord_map: dict, context_target: dict = None) -> bool:
         """Belirtilen tiklama sekansini calistirir."""
         if not sequence:
-            return True
+            self.log("UYARI: Bos sekans calistirilmaya calisildi.")
+            return False
 
-        self.location_manager.update_visual_location()
-
-        for step in sequence:
+        for idx, step in enumerate(sequence):
             if not self.running.is_set():
                 return False
 
-            action = step.get("action")
-            wait_ms = step.get("wait_ms", 0)
-            label = step.get("label", "")
+            action = self._normalize_action_name(step.get("action"))
+            label = step.get("label")
+            try:
+                wait_ms = int(step.get("wait_ms", 100))
+            except (TypeError, ValueError):
+                wait_ms = 100
 
-            success = True
+            success = False
+
             if action == "click":
-                coord = coords.get(label)
-                if coord:
-                    self.automator.click(label, coord_override=coord)
-                else:
-                    self.log(f"Sekans Hatasi: '{label}' koordinati bulunamadi.")
-                    success = False
+                coord = coord_map.get(label)
+                if not coord:
+                    self.log(f"Sekans hatasi: '{label}' koordinati bulunamadi.")
+                    return False
+                success = self.automator.click(label, coord)
+
+            elif action == "press_key":
+                key = step.get("key")
+                if not key:
+                    self.log("Sekans hatasi: press_key adiminda key eksik.")
+                    return False
+                success = self.automator.press_key(key, label=str(label or key))
+
+            elif action == "katman_secimi":
+                if not context_target:
+                    self.log("Sekans hatasi: katman_secimi icin context_target eksik.")
+                    return False
+                katman_label = context_target.get("katman_id")
+                coord = coord_map.get(katman_label)
+                if not katman_label or not coord:
+                    self.log(f"Sekans hatasi: katman koordinati bulunamadi ({katman_label}).")
+                    return False
+                success = self.automator.click(katman_label, coord, seal_label="seq_katman_secimi")
 
             elif action == "boss_secimi":
-                if context_target:
-                    target_coord = self.boss_manager._resolve_target_coordinates(context_target)
-                    if target_coord:
-                        self.automator.click(context_target.get("aciklama", "boss"), coord_override=target_coord)
-                    else:
-                        success = False
+                if not context_target:
+                    self.log("Sekans hatasi: boss_secimi icin context_target eksik.")
+                    return False
+                boss_coord_label = context_target.get("koordinat_ref")
+                coord = None
+                if isinstance(boss_coord_label, str):
+                    coord = coord_map.get(boss_coord_label) or context_target.get("koordinat")
+                elif isinstance(boss_coord_label, dict):
+                    coord = boss_coord_label
                 else:
-                    success = False
+                    coord = context_target.get("koordinat")
+                if not coord:
+                    self.log(f"Sekans hatasi: boss koordinati bulunamadi ({boss_coord_label}).")
+                    return False
+                click_label = boss_coord_label if isinstance(boss_coord_label, str) else context_target.get("aciklama", "boss_coord")
+                success = self.automator.click(click_label, coord, seal_label="seq_boss_secimi")
+
+            else:
+                self.log(f"Sekans hatasi: bilinmeyen aksiyon '{action}'.")
+                return False
 
             self.log_training_action(
                 "sequence_step",
-                {
-                    "action": action,
-                    "label": str(label or ""),
-                    "wait_ms": wait_ms,
-                    "success": bool(success),
-                },
+                {"index": idx, "action": action, "label": str(label or ""), "wait_ms": wait_ms, "success": bool(success)},
             )
             if not success:
                 self.log(f"Sekans adimi basarisiz: '{action}' -> '{label or ''}'.")
