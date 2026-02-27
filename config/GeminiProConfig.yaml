@@ -78,6 +78,7 @@ module_general:
     FREEZE_CHECK_INTERVAL_SN: 15
     MAX_FREEZE_DURATION_SN: 60
     EVENT_MONITOR_SLEEP_SEC: 60
+    EVENT_COMBAT_WAIT_SN: 60
     LOCATION_SCAN_INTERVAL_SN: 30
     GAME_UI_READY_DELAY_SN: 20
     RESTART_AFTER_KILL_WAIT_SN: 1
@@ -100,10 +101,18 @@ module_general:
     SCREEN_HEIGHT: 1440
     YOLO_MODEL_PATH: yolov10n.pt
     YOLO_DEVICE: cuda
+    YOLO_CLICK_CONF: 0.25
+    YOLO_CLICK_ROI_FIRST: true
+    YOLO_CLICK_FULL_FRAME_FALLBACK: false
+    YOLO_CLICK_ROI_HALF_W: 320
+    YOLO_CLICK_ROI_HALF_H: 220
+    HUMAN_LIKE_CLICK_ENABLED: false
+    SEQ_HUMAN_CLICK_DURATION: 0.10
+    SEQ_PERF_LOG_ENABLED: true
     SHADOW_MODE_ENABLED: false
-    SHADOW_DATA_ROOT: E:\\LoABot_Training_Data
+    SHADOW_DATA_ROOT: D:\\LoABot_Training_Data
     SHADOW_JPEG_QUALITY: 92
-    SEQUENTIAL_RECORDER_ROOT: E:\\LoABot_Training_Data\\sequences
+    SEQUENTIAL_RECORDER_ROOT: D:\\LoABot_Training_Data\\sequences
     SHADOW_QUEUE_MAXSIZE: 256
     SHADOW_WORKER_COUNT: 2
     SHADOW_SAVE_MIN_INTERVAL_SN: 0.15
@@ -118,12 +127,12 @@ module_general:
     MISSION_CAPTURE_FPS: 1.0
     MISSION_RUN_YOLO: false
     TRAINING_LOGGER_ENABLED: true
-    TRAINING_LOGGER_ROOT: E:\\LoABot_Training_Data\\AGENTIC_LOGS
+    TRAINING_LOGGER_ROOT: D:\\LoABot_Training_Data\\AGENTIC_LOGS
     TRAINING_LOGGER_QUEUE_MAXSIZE: 50000
     LOCAL_AI_ENABLED: true
     LOCAL_AI_OBSERVER_MODE: false
-    LOCAL_AI_MEMORY_PATH: E:\\LoABot_Training_Data\\runtime_data\\ai_memory.json
-    LOCAL_AI_HISTORY_PATH: E:\\LoABot_Training_Data\\runtime_data\\decision_history.jsonl
+    LOCAL_AI_MEMORY_PATH: D:\\LoABot_Training_Data\\runtime_data\\ai_memory.json
+    LOCAL_AI_HISTORY_PATH: D:\\LoABot_Training_Data\\runtime_data\\decision_history.jsonl
     OLLAMA_ENABLED: true
     OLLAMA_MODEL: qwen3-vl:4b
     OLLAMA_BASE_URL: http://localhost:11434
@@ -131,6 +140,14 @@ module_general:
     OLLAMA_MIN_CONFIDENCE: 0.50
     OLLAMA_NUM_GPU: 99
     OLLAMA_VISION_ENABLED: true
+
+  recording:
+    sequential:
+      enabled: true
+      max_ram_frames: 150
+      jpeg_quality: 85
+      output_path: "D:/LoABot_Training_Data/Sequences"
+      flush_on_success_only: true
     
   ui_regions:
     region_full_screen: {x: 0, y: 0, w: 2560, h: 1440}
@@ -249,25 +266,25 @@ module_demon_boss:
     poll_interval_sn: 0.05
 
   bosslar:
-    '800': {katman_id: katman_1_secim, boss_id: 800, head_start_saniye: 45, periyot_saat: 1.0, koordinat_ref: {x: 2342, y: 479}, anchor: {image_file: boss_800_anchor.png, region_key: region_full_screen, confidence: 0.85}, area_check: {image_file: 800_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 800GoldenStrangeBeast.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_800.png, region_key: region_full_screen, confidence: 0.4}}
+    '800': {katman_id: katman_1_secim, boss_id: 800, head_start_saniye: 50, periyot_saat: 1.0, koordinat_ref: {x: 2342, y: 479}, anchor: {image_file: boss_800_anchor.png, region_key: region_full_screen, confidence: 0.85}, area_check: {image_file: 800_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 800GoldenStrangeBeast.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_800.png, region_key: region_full_screen, confidence: 0.4}}
 
-    '820': {katman_id: katman_1_secim, boss_id: 820, head_start_saniye: 55, periyot_saat: 1.5, koordinat_ref: {x: 2333, y: 518}, anchor: {image_file: boss_820_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 820_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 820GoldenAdviser.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_820.png, region_key: region_full_screen, confidence: 0.4}}
+    '820': {katman_id: katman_1_secim, boss_id: 820, head_start_saniye: 60, periyot_saat: 1.5, koordinat_ref: {x: 2333, y: 518}, anchor: {image_file: boss_820_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 820_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 820GoldenAdviser.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_820.png, region_key: region_full_screen, confidence: 0.4}}
 
-    '840': {katman_id: katman_1_secim, boss_id: 840, head_start_saniye: 70, periyot_saat: 2.0, koordinat_ref: {x: 2342, y: 556}, anchor: {image_file: boss_840_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 840_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 840GoldenBlazingBeast.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_840.png, region_key: region_full_screen, confidence: 0.4}}
+    '840': {katman_id: katman_1_secim, boss_id: 840, head_start_saniye: 75, periyot_saat: 2.0, koordinat_ref: {x: 2342, y: 556}, anchor: {image_file: boss_840_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 840_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 840GoldenBlazingBeast.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_840.png, region_key: region_full_screen, confidence: 0.4}}
 
-    '860': {katman_id: katman_1_secim, boss_id: 860, head_start_saniye: 95, periyot_saat: 2.5, koordinat_ref: {x: 2326, y: 599}, anchor: {image_file: boss_860_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 860_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 860GoldenCancer.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_860.png, region_key: region_full_screen, confidence: 0.4}}
+    '860': {katman_id: katman_1_secim, boss_id: 860, head_start_saniye: 100, periyot_saat: 2.5, koordinat_ref: {x: 2326, y: 599}, anchor: {image_file: boss_860_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 860_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 860GoldenCancer.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_860.png, region_key: region_full_screen, confidence: 0.4}}
 
-    '880': {katman_id: katman_1_secim, boss_id: 880, head_start_saniye: 110, periyot_saat: 3.0, koordinat_ref: {x: 2326, y: 635}, anchor: {image_file: boss_880_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 880_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 880GoldenEmpress.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_880.png, region_key: region_full_screen, confidence: 0.4}}
+    '880': {katman_id: katman_1_secim, boss_id: 880, head_start_saniye: 115, periyot_saat: 3.0, koordinat_ref: {x: 2326, y: 635}, anchor: {image_file: boss_880_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 880_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 880GoldenEmpress.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_880.png, region_key: region_full_screen, confidence: 0.4}}
 
-    '900': {katman_id: katman_2_secim, boss_id: 900, head_start_saniye: 45, periyot_saat: 1.0, koordinat_ref: {x: 2328, y: 479}, anchor: {image_file: boss_900_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 900_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 900GoldenMagican.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_900.png, region_key: region_full_screen, confidence: 0.4}}
+    '900': {katman_id: katman_2_secim, boss_id: 900, head_start_saniye: 50, periyot_saat: 1.0, koordinat_ref: {x: 2328, y: 479}, anchor: {image_file: boss_900_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 900_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 900GoldenMagican.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_900.png, region_key: region_full_screen, confidence: 0.4}}
 
-    '920': {katman_id: katman_2_secim, boss_id: 920, head_start_saniye: 55, periyot_saat: 1.5, koordinat_ref: {x: 2313, y: 520}, anchor: {image_file: boss_920_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 920_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 920GoldenZeus.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_920.png, region_key: region_full_screen, confidence: 0.4}}
+    '920': {katman_id: katman_2_secim, boss_id: 920, head_start_saniye: 60, periyot_saat: 1.5, koordinat_ref: {x: 2313, y: 520}, anchor: {image_file: boss_920_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 920_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 920GoldenZeus.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_920.png, region_key: region_full_screen, confidence: 0.4}}
 
-    '940': {katman_id: katman_2_secim, boss_id: 940, head_start_saniye: 70, periyot_saat: 2.0, koordinat_ref: {x: 2337, y: 558}, anchor: {image_file: boss_940_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 940_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 940GoldenDemonLord.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_940.png, region_key: region_full_screen, confidence: 0.4}}
+    '940': {katman_id: katman_2_secim, boss_id: 940, head_start_saniye: 75, periyot_saat: 2.0, koordinat_ref: {x: 2337, y: 558}, anchor: {image_file: boss_940_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 940_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 940GoldenDemonLord.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_940.png, region_key: region_full_screen, confidence: 0.4}}
 
-    '960': {katman_id: katman_2_secim, boss_id: 960, head_start_saniye: 95, periyot_saat: 2.5, koordinat_ref: {x: 2342, y: 596}, anchor: {image_file: boss_960_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 960_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 960GoldenThunderGod.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_960.png, region_key: region_full_screen, confidence: 0.4}}
+    '960': {katman_id: katman_2_secim, boss_id: 960, head_start_saniye: 100, periyot_saat: 2.5, koordinat_ref: {x: 2342, y: 596}, anchor: {image_file: boss_960_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 960_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 960GoldenThunderGod.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_960.png, region_key: region_full_screen, confidence: 0.4}}
 
-    '980': {katman_id: katman_2_secim, boss_id: 980, head_start_saniye: 110, periyot_saat: 3.0, koordinat_ref: {x: 2310, y: 634}, anchor: {image_file: boss_980_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 980_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 980GoldenMagican.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_980.png, region_key: region_full_screen, confidence: 0.4}}
+    '980': {katman_id: katman_2_secim, boss_id: 980, head_start_saniye: 115, periyot_saat: 3.0, koordinat_ref: {x: 2310, y: 634}, anchor: {image_file: boss_980_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 980_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 980GoldenMagican.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_980.png, region_key: region_full_screen, confidence: 0.4}}
 
   walk_times:
     '800': {'820': 20, '840': 35, '860': 60, '880': 75}

@@ -809,6 +809,10 @@ class VisionManager:
                     stage=f"{stage}_miss",
                     force=shadow_force_capture,
                 )
-        except Exception:
+        except Exception as exc:
+            self.bot.log(
+                f"[VISION] find() hatasi: sablon={template_name!r} bolge={region} - {exc}",
+                level="WARNING",
+            )
             return None
         return None

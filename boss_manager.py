@@ -1,4 +1,7 @@
-import time
+﻿import time
+
+
+import os
 
 
 class BossManager:
@@ -131,27 +134,54 @@ class BossManager:
         self.bot.log(f"{check_name}: bulunamadi", level="DEBUG")
         return not required
 
-    def _start_navigation(self, target) -> bool:
+    def _start_navigation(self, target, ui_protocol: str = None) -> bool:
         """
-        Boss listesi ve hedef boss tiklamasini baslatir.
+        Boss listesi ve hedef boss tiklamasini AI ui_protocol kararina gore baslatir.
         """
-        current_region = self.bot.location_manager.get_region_name()
         target_loc = "KATMAN_1" if "katman_1" in str(target.get("katman_id", "")).lower() else "KATMAN_2"
+        current_region = str(self.bot.location_manager.get_region_name() or "UNKNOWN").upper()
 
-        if current_region == target_loc:
-            seq = [
-                {"action": "click", "label": "boss_list_ac", "wait_ms": 200},
-                {"action": "boss_secimi", "wait_ms": 200},
-            ]
-            ok = self.bot._run_sequence(seq, self.bot.coordinates, context_target=target)
+        protocol = str(ui_protocol or "").strip().upper()
+        valid = {"FULL_MENU_SEQUENCE", "SHORT_LIST_SEQUENCE", "DIRECT_BOSS_SELECTION"}
+        if protocol not in valid:
+            protocol = "FULL_MENU_SEQUENCE" if current_region != target_loc else "SHORT_LIST_SEQUENCE"
+
+        # Guvenlik: katman yanlissa short/direct zorlanamaz.
+        if protocol in {"SHORT_LIST_SEQUENCE", "DIRECT_BOSS_SELECTION"} and current_region != target_loc:
+            protocol = "FULL_MENU_SEQUENCE"
+
+        self.bot.log(
+            f"[NAV] Protokol=[{protocol}] current_region={current_region} target_region={target_loc}",
+            level="DEBUG",
+        )
+
+        if protocol == "FULL_MENU_SEQUENCE":
+            if current_region != "EXP_FARM":
+                if not self.bot.automator.return_to_exp_farm(force_restart_if_failed=True):
+                    return False
+
+            full_seq = list(getattr(self.bot, "boss_sequence_template", []) or [])
+            if not full_seq:
+                self.bot.log("Navigasyon hatasi: boss_sequence_template bos.", level="ERROR")
+                return False
+
+            self.bot.log(f"[NAV] FULL_MENU_SEQUENCE basladi (adim={len(full_seq)})", level="DEBUG")
+            ok = self.bot._run_sequence(full_seq, self.bot.coordinates, context_target=target)
             if ok:
                 self.bot.location_manager.set_current_location_by_name(target_loc)
             return ok
 
-        if not self.bot.automator.return_to_exp_farm(force_restart_if_failed=True):
-            return False
+        if protocol == "DIRECT_BOSS_SELECTION":
+            self.bot.log("[NAV] DIRECT_BOSS_SELECTION basladi (adim=1)", level="DEBUG")
+            direct_seq = [{"action": "boss_secimi", "wait_ms": 200}]
+            return self.bot._run_sequence(direct_seq, self.bot.coordinates, context_target=target)
 
-        ok = self.bot._run_sequence(self.bot.boss_sequence_template, self.bot.coordinates, context_target=target)
+        self.bot.log("[NAV] SHORT_LIST_SEQUENCE basladi (adim=2)", level="DEBUG")
+        short_seq = [
+            {"action": "click", "label": "boss_list_ac", "wait_ms": 200},
+            {"action": "boss_secimi", "wait_ms": 200},
+        ]
+        ok = self.bot._run_sequence(short_seq, self.bot.coordinates, context_target=target)
         if ok:
             self.bot.location_manager.set_current_location_by_name(target_loc)
         return ok
@@ -166,21 +196,29 @@ class BossManager:
         ]
         return self.bot._run_sequence(seq, self.bot.coordinates, context_target=target)
 
-    def execute_precise_boss_flow(self, target) -> bool:
+    def execute_precise_boss_flow(self, target, ui_protocol: str = None) -> bool:
         """
         Esnek zaman pencereli hassas akis:
         - T-PRE: Tarama penceresi acilir (SCAN_WINDOW_PRE_SN, varsayilan 5sn)
         - T-PRE..T=0 : Area tarama (bir kez bulununca yeniden aramaz)
         - T=0..T+POST: Spawn + saldiri + victory (SCAN_WINDOW_POST_SN, varsayilan 5sn)
-        - Victory: Erken cikis — 10sn pencereyi bekleme
+        - Victory: Erken cikis â€” 10sn pencereyi bekleme
         """
         if not hasattr(self.bot, "combat"):
             return False
 
-        coords = self._resolve_target_coordinates(target)
-        tx, ty = coords.get("x"), coords.get("y")
-        if tx is not None and ty is not None:
-            self.bot.log(f"{target['aciklama']} yoluna cikildi. Hedef: {tx}, {ty}")
+        spawn_ts = target.get("spawn_time")
+        if not isinstance(spawn_ts, (int, float)):
+            return False
+
+        protocol_name = str(ui_protocol or "").strip().upper() or self._derive_safe_protocol(target)
+        if not self._wait_for_navigation_window(target, protocol_name):
+            return False
+
+        self.bot.log(
+            f"[BOSS_FLOW] basladi boss={target.get('aciklama')} protocol={protocol_name}",
+            level="DEBUG",
+        )
 
         self.bot.start_global_mission(
             phase="NAV_PHASE",
@@ -195,23 +233,25 @@ class BossManager:
             extra={"boss_id": str(target.get("aciklama", "unknown"))},
         )
 
-        if not self._start_navigation(target):
+        nav_ok = self._start_navigation(target, ui_protocol=protocol_name)
+        self.bot.log(f"Navigasyon fazi sonucu: boss={target.get('aciklama')} success={nav_ok}", level="DEBUG")
+        if not nav_ok:
             self.bot.log_training_outcome(
                 "boss_flow",
                 {"boss_id": str(target.get("aciklama", "unknown")), "success": False, "reason": "navigation_failed"},
             )
+            if hasattr(self.bot, "reward_engine"):
+                self.bot.reward_engine.on_death(boss_name=str(target.get("aciklama", "")))
             return False
 
         self.bot.automator.press_key("z")
 
-        spawn_ts = target.get("spawn_time")
-        if not isinstance(spawn_ts, (int, float)):
-            return False
-
-        # Planlı spawn zamanı = saldırı referans noktası (recalculate_times için)
+        # PlanlÄ± spawn zamanÄ± = saldÄ±rÄ± referans noktasÄ± (recalculate_times iÃ§in)
         attack_start = float(spawn_ts)
+        _combat_start_ts = time.time()
 
         kill_ok = self._unified_spawn_sequence(target, spawn_ts)
+        kill_time = time.time() - _combat_start_ts
         self.bot.log(f"Boss sonucu ({target['aciklama']}): {'OK' if kill_ok else 'FAIL'}")
         self.bot.log_training_outcome(
             "boss_flow",
@@ -220,37 +260,45 @@ class BossManager:
 
         if kill_ok:
             self.bot.combat.recalculate_times(target, attack_start)
+            if hasattr(self.bot, "reward_engine"):
+                self.bot.reward_engine.on_boss_killed(
+                    boss_name=str(target.get("aciklama", "")),
+                    kill_time=round(kill_time, 2),
+                )
+        else:
+            if hasattr(self.bot, "reward_engine"):
+                self.bot.reward_engine.on_death(boss_name=str(target.get("aciklama", "")))
         return bool(kill_ok)
 
     def _unified_spawn_sequence(self, target, spawn_ts: float) -> bool:
         """
-        T-PRE / T+POST esnek pencere tarayıcısı.
+        T-PRE / T+POST esnek pencere tarayÄ±cÄ±sÄ±.
 
-        Hiyerarşik durum makinesi:
-          area → spawn → saldırı → victory
+        HiyerarÅŸik durum makinesi:
+          area â†’ spawn â†’ saldÄ±rÄ± â†’ victory
 
         Kurallar:
-          - Bir görsel bulununca o durum True kalır, yeniden aranmaz.
-          - Victory yakalanınca döngü anında kırılır (erken çıkış).
-          - Aksiyon bitince tüm durumlar otomatik sıfırlanır (yerel değişkenler).
-          - 200ms poll → saniyede 5 kontrol, UI/sistem kasma yok.
+          - Bir gÃ¶rsel bulununca o durum True kalÄ±r, yeniden aranmaz.
+          - Victory yakalanÄ±nca dÃ¶ngÃ¼ anÄ±nda kÄ±rÄ±lÄ±r (erken Ã§Ä±kÄ±ÅŸ).
+          - Aksiyon bitince tÃ¼m durumlar otomatik sÄ±fÄ±rlanÄ±r (yerel deÄŸiÅŸkenler).
+          - 200ms poll â†’ saniyede 5 kontrol, UI/sistem kasma yok.
 
         Args:
             target   : Boss hedef dict'i
-            spawn_ts : Beklenen doğma Unix zamanı
+            spawn_ts : Beklenen doÄŸma Unix zamanÄ±
 
         Returns:
-            True  → kill onaylandı (ya da onay gerektirmeyen config)
-            False → zaman aşımı, bot durumu veya kritik hata
+            True  â†’ kill onaylandÄ± (ya da onay gerektirmeyen config)
+            False â†’ zaman aÅŸÄ±mÄ±, bot durumu veya kritik hata
         """
-        POLL = 0.1  # 100ms — non-blocking hassasiyet
+        POLL = 0.1  # 100ms â€” non-blocking hassasiyet
         PRE  = float(self.settings.get("SCAN_WINDOW_PRE_SN",  5.0))  # T-5
         POST = float(self.settings.get("SCAN_WINDOW_POST_SN", 5.0))  # T+5
 
         window_open_ts  = spawn_ts - PRE
         window_close_ts = spawn_ts + POST
 
-        # ── Görsel konfigürasyonlarını hazırla ──────────────────────────
+        # â”€â”€ GÃ¶rsel konfigÃ¼rasyonlarÄ±nÄ± hazÄ±rla â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         try:
             area_data = self.bot.vision.get_boss_visual_data(target, "area_check") or {}
         except Exception:
@@ -276,7 +324,7 @@ class BossManager:
             "region_full_screen", {"x": 0, "y": 0, "w": 2560, "h": 1440}
         )
 
-        # ── Durum bayrakları (yerel → her çağrıda sıfırlanır) ───────────
+        # â”€â”€ Durum bayraklarÄ± (yerel â†’ her Ã§aÄŸrÄ±da sÄ±fÄ±rlanÄ±r) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         area_found    = False
         spawn_found   = False
         attack_done   = False
@@ -285,7 +333,7 @@ class BossManager:
 
         target["_area_check_ok"] = False
 
-        # ── T-PRE anına kadar bekle ──────────────────────────────────────
+        # â”€â”€ T-PRE anÄ±na kadar bekle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         wait_pre = window_open_ts - time.time()
         if wait_pre > 0 and not self.bot._interruptible_wait(wait_pre):
             return False
@@ -297,14 +345,14 @@ class BossManager:
             f"spawn={len(spawn_images)} victory={len(victory_images)}"
         )
 
-        # ── Ana tarama döngüsü ───────────────────────────────────────────
+        # â”€â”€ Ana tarama dÃ¶ngÃ¼sÃ¼ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         while self.bot.running.is_set():
             now = time.time()
             if now >= window_close_ts:
                 break
 
-            # ── 1. AREA ─────────────────────────────────────────────────
-            # T-PRE'dan itibaren taranır; bir kez bulununca tekrar aranmaz.
+            # â”€â”€ 1. AREA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # T-PRE'dan itibaren taranÄ±r; bir kez bulununca tekrar aranmaz.
             if not area_found and area_image and area_image != "default.png":
                 if self.bot.vision.find(
                     area_image, region, area_conf,
@@ -314,8 +362,8 @@ class BossManager:
                     target["_area_check_ok"] = True
                     self.bot.log(f"[FlexScan] AREA bulundu: {area_image}")
 
-            # ── 2. SPAWN ────────────────────────────────────────────────
-            # T=0'dan itibaren taranır; bir kez bulununca tekrar aranmaz.
+            # â”€â”€ 2. SPAWN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # T=0'dan itibaren taranÄ±r; bir kez bulununca tekrar aranmaz.
             if not spawn_found and spawn_enabled and spawn_images and now >= spawn_ts:
                 for img in spawn_images:
                     if self.bot.vision.find(
@@ -327,8 +375,8 @@ class BossManager:
                         self.bot.log(f"[FlexScan] SPAWN bulundu: {img}")
                         break
 
-            # ── 3. SALDIRI ──────────────────────────────────────────────
-            # Spawn doğrulandığında VEYA T=0 geçtiğinde (spawn onayı opsiyonel).
+            # â”€â”€ 3. SALDIRI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # Spawn doÄŸrulandÄ±ÄŸÄ±nda VEYA T=0 geÃ§tiÄŸinde (spawn onayÄ± opsiyonel).
             if not attack_done and (spawn_found or now >= spawn_ts):
                 self.bot.set_global_mission_phase(
                     phase="COMBAT_PHASE",
@@ -340,8 +388,8 @@ class BossManager:
                 attack_done = True
                 self.bot.log(f"[FlexScan] SALDIRI: {target['aciklama']}")
 
-            # ── 4. VICTORY ──────────────────────────────────────────────
-            # Saldırı başladıktan sonra taranır; bulununca ERKEN ÇIKIŞ.
+            # â”€â”€ 4. VICTORY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # SaldÄ±rÄ± baÅŸladÄ±ktan sonra taranÄ±r; bulununca ERKEN Ã‡IKIÅ.
             if attack_done and not victory_found and victory_images:
                 for img in victory_images:
                     if self.bot.vision.find(
@@ -350,12 +398,12 @@ class BossManager:
                         shadow_force_capture=True,
                     ):
                         victory_found = True
-                        self.bot.log(f"[FlexScan] VICTORY — erken cikis: {img}")
+                        self.bot.log(f"[FlexScan] VICTORY â€” erken cikis: {img}")
                         break
                 if victory_found:
-                    break  # ← ERKEN ÇIKIŞ: 10sn pencereyi bekleme
+                    break  # â† ERKEN Ã‡IKIÅ: 10sn pencereyi bekleme
 
-            # ── 100ms bekleme (non-blocking) ────────────────────────────
+            # â”€â”€ 100ms bekleme (non-blocking) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             time.sleep(POLL)
 
         self.bot.log(
@@ -364,18 +412,18 @@ class BossManager:
             f"attack={attack_done} victory={victory_found}"
         )
 
-        # ── Sonuç değerlendirmesi ────────────────────────────────────────
+        # â”€â”€ SonuÃ§ deÄŸerlendirmesi â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if not victory_images:
-            # Victory görseli yapılandırılmamış → saldırı olduysa başarı say
+            # Victory gÃ¶rseli yapÄ±landÄ±rÄ±lmamÄ±ÅŸ â†’ saldÄ±rÄ± olduysa baÅŸarÄ± say
             if not attack_done:
-                # Hiç saldırı olmadıysa fallback bekleme (legacy davranış)
+                # HiÃ§ saldÄ±rÄ± olmadÄ±ysa fallback bekleme (legacy davranÄ±ÅŸ)
                 return self.bot._interruptible_wait(4.0)
             return attack_done
 
         if victory_found:
             return True
 
-        # Victory bulunamadı; "required=False" ise saldırı olduysa başarı say
+        # Victory bulunamadÄ±; "required=False" ise saldÄ±rÄ± olduysa baÅŸarÄ± say
         if not victory_required:
             return attack_done
 
@@ -411,54 +459,191 @@ class BossManager:
             return next_boss
         return None
 
+    def _collect_ready_targets(self, now_ts: float) -> list:
+        """
+        Cooldown + head_start + lookahead kurallarina gore saldiri adayi toplar.
+        Not:
+        - Sadece "tam hazir" bosslari degil, head_start penceresine cok yakin
+          bosslari da dahil eder.
+        - Secim asamasinda "en yakin dogus" politikasi uygulanir.
+        """
+        cooldown = float(self.settings.get("BOSS_ATTACK_COOLDOWN_SN", 15.0))
+        lookahead = float(self.settings.get("BOSS_SELECTION_LOOKAHEAD_SN", 15.0))
+        ready = []
+
+        for boss in self.bosslar.values():
+            spawn_ts = boss.get("spawn_time")
+            if not isinstance(spawn_ts, (int, float)):
+                continue
+
+            head_start = float(boss.get("head_start_saniye", 0))
+            ready_at_ts = float(spawn_ts) - head_start
+            last_attack_ts = float(boss.get("_last_attack_ts", 0))
+            cooldown_ok = (now_ts - last_attack_ts) >= cooldown
+            near_ready = now_ts + max(0.0, lookahead) >= ready_at_ts
+            if near_ready and cooldown_ok:
+                boss["_ready_at_ts"] = ready_at_ts
+                boss["_spawn_delta_sn"] = max(0.0, float(spawn_ts) - now_ts)
+                ready.append(boss)
+
+        return ready
+
+    def _derive_safe_protocol(self, target: dict) -> str:
+        """
+        AI protokol vermezse veya gecersiz verirse v5.8 disiplini fallback.
+        """
+        current_region = "UNKNOWN"
+        try:
+            current_region = str(self.bot.location_manager.get_region_name() or "UNKNOWN").upper()
+        except Exception:
+            pass
+
+        target_loc = "KATMAN_1" if "katman_1" in str(target.get("katman_id", "")).lower() else "KATMAN_2"
+        if current_region != target_loc:
+            return "FULL_MENU_SEQUENCE"
+        return "SHORT_LIST_SEQUENCE"
+
+    def _select_target_with_protocol(self, ready_targets: list):
+        """
+        Aday listeden hedef secer ve uygulanacak navigasyon protokolunu kesinler.
+        Politika:
+        - Varsayilan olarak en yakin dogus (en kucuk spawn_time) zorunlu.
+        - AI secimi farkliysa loglanir ve override edilir.
+        """
+        force_earliest_spawn = bool(self.settings.get("FORCE_EARLIEST_SPAWN_SELECTION", True))
+        earliest_spawn_target = sorted(
+            ready_targets,
+            key=lambda h: (
+                float(h.get("spawn_time", 10**12)),
+                float(h.get("_ready_at_ts", 10**12)),
+                str(h.get("aciklama", "")),
+            ),
+        )[0]
+
+        target = None
+        if hasattr(self.bot, "brain"):
+            try:
+                target = self.bot.brain.decide_next_target(ready_targets)
+            except Exception as exc:
+                self.bot.log(f"TacticalBrain hedef secim hatasi: {exc}", level="WARNING")
+
+        if not target:
+            target = earliest_spawn_target
+
+        if force_earliest_spawn and target is not earliest_spawn_target:
+            self.bot.log(
+                f"[BOSS_LOOP] AI secimi override edildi: "
+                f"ai={target.get('aciklama')} -> earliest_spawn={earliest_spawn_target.get('aciklama')}",
+                level="WARNING",
+            )
+            target = earliest_spawn_target
+
+        protocol = str((target or {}).get("_ui_protocol", "")).strip().upper()
+        if not protocol:
+            protocol = self._derive_safe_protocol(target)
+
+        return target, protocol
+
+    def _execute_single_attack_attempt(self, target: dict, protocol: str) -> bool:
+        boss_id = str(target.get("aciklama", "unknown"))
+        protocol_name = str(protocol or "").strip().upper() or self._derive_safe_protocol(target)
+
+        self.bot.log(f"[BOSS_LOOP] hedef={boss_id} protocol={protocol_name}", level="DEBUG")
+        self.bot.attacking_target_aciklama = boss_id
+        try:
+            self.bot.auto_start_recording("boss_attack", timeout_sec=300)
+            return bool(self.execute_precise_boss_flow(target, ui_protocol=protocol_name))
+        finally:
+            self.bot.attacking_target_aciklama = None
+
+    def _wait_for_navigation_window(self, target: dict, protocol: str) -> bool:
+        """
+        Navigasyonu boss'un head_start_saniye kuralina gore zamanlar.
+        Baslangic noktasi: spawn_time - head_start_saniye
+        """
+        spawn_ts = target.get("spawn_time")
+        if not isinstance(spawn_ts, (int, float)):
+            return False
+
+        proto = str(protocol or "").strip().upper()
+        head_start = float((target or {}).get("head_start_saniye", 0.0))
+        ready_at = float(spawn_ts) - max(0.0, head_start)
+        wait_sn = ready_at - time.time()
+        if wait_sn <= 0:
+            return True
+
+        self.bot.log(
+            f"[NAV] HeadStart bekleme: protocol={proto} head_start={head_start:.1f}s "
+            f"spawn_oncesi_bekleme={wait_sn:.1f}s",
+            level="DEBUG",
+        )
+        return bool(self.bot._interruptible_wait(wait_sn))
+
     def automation_thread(self):
         self.bot.log("BossManager aktif.")
+        self.bot.log(f"BossManager source aktif: {os.path.abspath(__file__)}", level="DEBUG")
+        loop_sleep = float(self.settings.get("MAIN_LOOP_SLEEP_SN", 1.0))
         while True:
             if not self.bot.running.is_set() or self.bot.paused or self.bot.active_event:
                 time.sleep(1.0)
                 continue
 
+            # Guard: Navigasyon sablonu eksikse boss dongusu baslatamaz;
+            # sonsuz deneme yerine 10s bekleyip yeniden kontrol et.
+            if not getattr(self.bot, "boss_sequence_template", None):
+                self.bot.log(
+                    "BossManager: boss_sequence_template bos veya yuklenmemis, bekleniyor.",
+                    level="WARNING",
+                )
+                time.sleep(10.0)
+                continue
+
             try:
                 self.bot.location_manager.update_visual_location()
                 now = time.time()
-
-                # ANTI-LOOP: Son saldırının üzerinden en az BOSS_ATTACK_COOLDOWN_SN
-                # saniye geçmemiş bosslar ready listesine alınmaz.
-                cooldown = float(self.settings.get("BOSS_ATTACK_COOLDOWN_SN", 15.0))
-                ready = [
-                    h
-                    for h in self.bosslar.values()
-                    if h.get("spawn_time")
-                    and now >= (h["spawn_time"] - h.get("head_start_saniye", 0))
-                    and (now - h.get("_last_attack_ts", 0)) >= cooldown
-                ]
+                ready = self._collect_ready_targets(now)
                 if not ready:
-                    time.sleep(float(self.settings.get("MAIN_LOOP_SLEEP_SN", 1.0)))
+                    time.sleep(loop_sleep)
                     continue
 
-                ai_target = self.bot.brain.decide_next_target(ready) if hasattr(self.bot, "brain") else None
-                target = ai_target if ai_target else sorted(ready, key=lambda h: h["spawn_time"])[0]
+                target, selected_protocol = self._select_target_with_protocol(ready)
+                success = False
+                flush_done = False
                 try:
-                    with self.bot.action_lock:
-                        self.bot.attacking_target_aciklama = target["aciklama"]
-                        self.bot.auto_start_recording("boss_attack", timeout_sec=300)
-
-                        try:
-                            success = self.execute_precise_boss_flow(target)
-                        finally:
-                            self.bot.attacking_target_aciklama = None
+                    success = self._execute_single_attack_attempt(target, selected_protocol)
 
                     if success:
+                        seq = getattr(self.bot, "seq_recorder", None)
+                        if seq is not None:
+                            boss_id = str(target.get("aciklama", "unknown"))
+                            flush_done = bool(seq.signal_success(reason=f"boss_{boss_id}_success"))
                         self._handle_post_attack_logic(target)
+                        if hasattr(self.bot, "stop_global_mission"):
+                            self.bot.stop_global_mission(reason=f"boss_{target.get('aciklama')}_success")
                     else:
+                        if hasattr(self.bot, "reward_engine"):
+                            self.bot.reward_engine.on_restart(reason="boss_flow_failed")
                         self.bot.automator.return_to_exp_farm(force_restart_if_failed=True)
+                        if hasattr(self.bot, "stop_global_mission"):
+                            self.bot.stop_global_mission(reason=f"boss_{target.get('aciklama')}_failed")
                 finally:
-                    # Her saldırı girişimi sonrası zaman damgası güncelle (başarılı/başarısız)
+                    # Her saldÄ±rÄ± giriÅŸimi sonrasÄ± zaman damgasÄ± gÃ¼ncelle (baÅŸarÄ±lÄ±/baÅŸarÄ±sÄ±z)
                     target["_last_attack_ts"] = time.time()
+                    seq = getattr(self.bot, "seq_recorder", None)
+                    if seq is not None:
+                        boss_id = str(target.get("aciklama", "unknown"))
+                        if not success:
+                            seq.signal_fail(reason=f"boss_{boss_id}_fail")
+                        elif not flush_done:
+                            # Guvenlik: Basari flush'i post-logic'de kacirildiysa burada dene.
+                            seq.signal_success(reason=f"boss_{boss_id}_success_late")
                     self.bot.auto_stop_recording()
 
             except Exception as exc:
                 self.bot.log(f"BossManager hatasi: {exc}")
+                self.bot.attacking_target_aciklama = None
+                if hasattr(self.bot, "auto_stop_recording"):
+                    self.bot.auto_stop_recording()
                 time.sleep(2.0)
 
     def _verify_kill(self, boss):
@@ -498,12 +683,11 @@ class BossManager:
                 },
             )
 
-            with self.bot.action_lock:
-                self.bot.attacking_target_aciklama = next_boss["aciklama"]
-                try:
-                    chained_ok = self.execute_precise_boss_flow(next_boss)
-                finally:
-                    self.bot.attacking_target_aciklama = None
+            self.bot.attacking_target_aciklama = next_boss["aciklama"]
+            try:
+                chained_ok = self.execute_precise_boss_flow(next_boss, ui_protocol="SHORT_LIST_SEQUENCE")
+            finally:
+                self.bot.attacking_target_aciklama = None
 
             if not chained_ok:
                 self.bot.automator.return_to_exp_farm(force_restart_if_failed=True)

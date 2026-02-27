@@ -107,6 +107,12 @@ class AIEngine:
         head_start = float(boss.get("head_start_saniye", 0.0))
         return max(0.0, (float(spawn_ts) - head_start) - now)
 
+    def _boss_spawn_delta(self, boss: Dict, now: float) -> float:
+        spawn_ts = boss.get("spawn_time")
+        if not isinstance(spawn_ts, (int, float)):
+            return 10**9
+        return max(0.0, float(spawn_ts) - now)
+
     def _is_same_map(self, current_region: str, boss: Dict) -> bool:
         current = str(current_region or "").upper()
         katman = str(boss.get("katman_id", "")).lower()
@@ -126,19 +132,17 @@ class AIEngine:
         current_region = self._region_name()
 
         def sort_key(boss: Dict):
+            # v5.9 policy: once candidates are attackable/near-attackable, always prefer
+            # the earliest actual spawn time. Map/success are only tie-breakers.
+            spawn_delta = self._boss_spawn_delta(boss, now)
             same_map_priority = 0 if self._is_same_map(current_region, boss) else 1
-            ready_delta = self._boss_ready_delta(boss, now)
             success_rate = self.memory.get_boss_success_rate(str(boss.get("aciklama", "")))
-            return (same_map_priority, ready_delta, -success_rate, str(boss.get("aciklama", "")))
+            return (spawn_delta, same_map_priority, -success_rate, str(boss.get("aciklama", "")))
 
         chosen = sorted(ready_bosses, key=sort_key)[0]
         boss_name = str(chosen.get("aciklama", ""))
-        confidence = 0.90 if self._is_same_map(current_region, chosen) else 0.75
-        reason = (
-            "same_map_priority_then_earliest_spawn"
-            if self._is_same_map(current_region, chosen)
-            else "earliest_spawn_with_success_rate_tiebreak"
-        )
+        confidence = 0.80 if self._is_same_map(current_region, chosen) else 0.75
+        reason = "earliest_spawn_with_map_success_tiebreak"
 
         context = {
             "current_location": current_region,

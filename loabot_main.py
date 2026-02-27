@@ -21,6 +21,8 @@ from popup_manager import PopupManager
 from tactical_brain import TacticalBrain
 from training_logger import TrainingLogger
 from sequential_recorder import SequentialRecorder
+from user_input_monitor import UserInputMonitor
+from reward_engine import RewardEngine
 
 
 class LoABot:
@@ -58,6 +60,8 @@ class LoABot:
         self.gui_manager = GUIManager(self)
         self.pvp_manager = PvPManager(self)
         self.popup_manager = PopupManager(self)
+        self.user_monitor = UserInputMonitor(self)
+        self.reward_engine = RewardEngine(self)
 
         # 2) Threadleri baslat
         self._start_threads()
@@ -185,17 +189,35 @@ class LoABot:
             },
         )
         if hasattr(self, "vision"):
-            self.vision.set_mission_namespace(phase, stage)
+            try:
+                if hasattr(self.vision, "set_global_mission_phase"):
+                    self.vision.set_global_mission_phase(
+                        namespace=phase,
+                        stage=stage,
+                        reason=reason,
+                        extra=self._global_mission_extra,
+                    )
+                elif hasattr(self.vision, "set_mission_namespace"):
+                    # Geriye donuk uyumluluk (eski Vision API)
+                    self.vision.set_mission_namespace(phase, stage)
+            except Exception as exc:
+                self.log(f"Vision mission senkron hatasi: {exc}", level="WARNING")
 
     def start_global_mission(self, phase: str, stage: str, reason: str = "", extra: dict = None):
         self.set_global_mission_phase(phase, stage, reason, extra)
         if hasattr(self, "training_logger"):
-            self.training_logger.start_episode(mission_type=reason, context=extra)
+            self.training_logger.start_episode(episode_type=reason, context=extra)
+        if hasattr(self, "reward_engine"):
+            self.reward_engine.reset_episode()
 
     def stop_global_mission(self, reason: str = ""):
         self.set_global_mission_phase("IDLE_PHASE", "waiting", reason, {})
         if hasattr(self, "training_logger"):
-            self.training_logger.end_episode(status="completed", reason=reason)
+            reward_summary = {}
+            if hasattr(self, "reward_engine"):
+                reward_summary = self.reward_engine.get_episode_summary()
+                self.reward_engine.reset_episode()
+            self.training_logger.end_episode(status="completed", reason=reason, metrics=reward_summary)
 
     def capture_local_decision_frame(
         self, action_name: str, payload: dict = None, phase: str = None, stage: str = None
@@ -277,83 +299,14 @@ class LoABot:
         return aliases.get(name, name)
 
     def _run_sequence(self, sequence: list, coord_map: dict, context_target: dict = None) -> bool:
-        """Belirtilen tiklama sekansini calistirir."""
-        if not sequence:
-            self.log("UYARI: Bos sekans calistirilmaya calisildi.")
+        if not hasattr(self, "automator") or self.automator is None:
+            self.log("Sekans hatasi: Automator hazir degil.")
             return False
-
-        for idx, step in enumerate(sequence):
-            if not self.running.is_set():
-                return False
-
-            action = self._normalize_action_name(step.get("action"))
-            label = step.get("label")
-            try:
-                wait_ms = int(step.get("wait_ms", 100))
-            except (TypeError, ValueError):
-                wait_ms = 100
-
-            success = False
-
-            if action == "click":
-                coord = coord_map.get(label)
-                if not coord:
-                    self.log(f"Sekans hatasi: '{label}' koordinati bulunamadi.")
-                    return False
-                success = self.automator.click(label, coord)
-
-            elif action == "press_key":
-                key = step.get("key")
-                if not key:
-                    self.log("Sekans hatasi: press_key adiminda key eksik.")
-                    return False
-                success = self.automator.press_key(key, label=str(label or key))
-
-            elif action == "katman_secimi":
-                if not context_target:
-                    self.log("Sekans hatasi: katman_secimi icin context_target eksik.")
-                    return False
-                katman_label = context_target.get("katman_id")
-                coord = coord_map.get(katman_label)
-                if not katman_label or not coord:
-                    self.log(f"Sekans hatasi: katman koordinati bulunamadi ({katman_label}).")
-                    return False
-                success = self.automator.click(katman_label, coord, seal_label="seq_katman_secimi")
-
-            elif action == "boss_secimi":
-                if not context_target:
-                    self.log("Sekans hatasi: boss_secimi icin context_target eksik.")
-                    return False
-                boss_coord_label = context_target.get("koordinat_ref")
-                coord = None
-                if isinstance(boss_coord_label, str):
-                    coord = coord_map.get(boss_coord_label) or context_target.get("koordinat")
-                elif isinstance(boss_coord_label, dict):
-                    coord = boss_coord_label
-                else:
-                    coord = context_target.get("koordinat")
-                if not coord:
-                    self.log(f"Sekans hatasi: boss koordinati bulunamadi ({boss_coord_label}).")
-                    return False
-                click_label = boss_coord_label if isinstance(boss_coord_label, str) else context_target.get("aciklama", "boss_coord")
-                success = self.automator.click(click_label, coord, seal_label="seq_boss_secimi")
-
-            else:
-                self.log(f"Sekans hatasi: bilinmeyen aksiyon '{action}'.")
-                return False
-
-            self.log_training_action(
-                "sequence_step",
-                {"index": idx, "action": action, "label": str(label or ""), "wait_ms": wait_ms, "success": bool(success)},
-            )
-            if not success:
-                self.log(f"Sekans adimi basarisiz: '{action}' -> '{label or ''}'.")
-                return False
-
-            if wait_ms > 0 and not self._interruptible_wait(wait_ms / 1000.0):
-                return False
-
-        return True
+        return self.automator.execute_sequence(
+            sequence=sequence,
+            coord_map=coord_map,
+            context_target=context_target,
+        )
 
     def auto_start_recording(self, trigger_type: str, timeout_sec: float = 120.0) -> bool:
         """Sadece sistem (boss/event manager) tarafından tetiklenen saf otomatik kayıt."""
@@ -382,6 +335,7 @@ class LoABot:
     def auto_stop_recording(self):
         """Sistemin kaydı güvenli bir şekilde kapatmasını sağlar."""
         if getattr(self, "_auto_log_active", False):
+            trigger = str(getattr(self, "_auto_log_trigger", "")).strip().lower()
             self.log("[AUTO-LOG] Kayıt durduruluyor.", level="DEBUG")
             self._auto_log_active = False
             
@@ -391,65 +345,135 @@ class LoABot:
                 
             if hasattr(self, "seq_recorder") and self.seq_recorder:
                 self.seq_recorder.stop()
+            self._auto_log_trigger = ""
+
+            if trigger == "boss_attack" and getattr(self, "attacking_target_aciklama", None):
+                self.log(
+                    "AUTO-LOG: boss_attack kaydi kapanirken saldiri hedefi temizlendi.",
+                    level="DEBUG",
+                )
+                self.attacking_target_aciklama = None
+
+    def force_cleanup_combat_state(self, reason: str = "event_interrupt") -> None:
+        """
+        Aktif saldırı/combat durumunu temiz olarak sonlandırır.
+        EventManager etkinlik girişinden önce çağırır; boss akışı kesintiye uğramışsa
+        saldırı flagleri sıfırlanır ve spawn süresi fallback ile güncellenir.
+        """
+        self.log(f"[FORCE_CLEANUP] Combat durumu temizleniyor. Sebep: {reason}")
+
+        # Kesilen boss'u bul (recalculate için)
+        interrupted_boss = None
+        boss_adi = getattr(self, "attacking_target_aciklama", None)
+        if boss_adi and hasattr(self, "bosslar"):
+            interrupted_boss = self.bosslar.get(str(boss_adi))
+
+        # Spawn zamanı fallback: boss öldürülemediyse bir sonraki periyot hesapla
+        if interrupted_boss is not None and hasattr(self, "combat"):
+            try:
+                self.combat.recalculate_times_interrupted(interrupted_boss)
+            except Exception as exc:
+                self.log(
+                    f"[FORCE_CLEANUP] recalculate_times_interrupted hatasi: {exc}",
+                    level="WARNING",
+                )
+
+        # Saldırı flaglerini sıfırla
+        self.attacking_target_aciklama = None
+
+        # Global phase'i IDLE'a sıfırla (sadece aktif combat aşamalarında)
+        current_phase = str(getattr(self, "_global_phase", "")).strip().upper()
+        if current_phase in {"NAV_PHASE", "COMBAT_PHASE", "LOOT_PHASE"}:
+            self.stop_global_mission(reason=f"force_cleanup:{reason}")
+
+        # Güvenlik: devam eden boss kaydını kapat
+        self.auto_stop_recording()
+
+        self.log(f"[FORCE_CLEANUP] Temizlik tamamlandi. Boss: {boss_adi or 'yok'}")
 
     def restart_game(self):
         if getattr(self, "_is_restarting", False):
             return False
 
         self._is_restarting = True
+        lock_acquired = False
+        lock_timeout = float(self.settings.get("RESTART_ACTION_LOCK_TIMEOUT_SN", 3.0))
         
-        # --- GUI DURUM GÜNCELLEMESİ KISMI EKLENDİ ---
-        self.gui_queue.put(("status_line1", ("Oyun Yeniden Başlatılıyor...", "red")))
-        self.gui_queue.put(("status_line2", ("Lütfen bekleyin...", "gray")))
+        # --- GUI DURUM GUNCELLEMESI ---
+        self.gui_queue.put(("status_line1", ("Oyun Yeniden Baslatiliyor...", "red")))
+        self.gui_queue.put(("status_line2", ("Lutfen bekleyin...", "gray")))
 
         self.log("Restart proseduru baslatildi.")
         self.log_training_outcome("restart", {"status": "started"})
 
-        with self.action_lock:
+        try:
+            lock_acquired = self.action_lock.acquire(timeout=max(0.5, lock_timeout))
+            if not lock_acquired:
+                self.log(
+                    "Restart: action_lock zaman asimi. Zorunlu restart moduna geciliyor.",
+                    level="WARNING",
+                )
+
             self.running.clear()
-            try:
-                # os.system YERİNE subprocess KULLANILDI (Bloklamayı Engellemek İçin)
-                subprocess.run(["taskkill", "/f", "/im", self.process_name], 
-                               capture_output=True, 
-                               creationflags=subprocess.CREATE_NO_WINDOW)
-                
-                kill_wait = float(self.settings.get("RESTART_AFTER_KILL_WAIT_SN", 1.0))
-                time.sleep(max(0.2, kill_wait))
+            self.auto_stop_recording()
+            self.attacking_target_aciklama = None
+            self.active_event = None
 
-                if not os.path.exists(self.game_path):
-                    self.log("HATA: game_path bulunamadi.")
-                    return False
+            # os.system yerine subprocess: bloklamayi azalt.
+            subprocess.run(
+                ["taskkill", "/f", "/im", self.process_name],
+                capture_output=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
 
-                os.startfile(self.game_path)
-                # Karakter/sunucu seçim ekranının gelmesi için kısa bekleme
-                pre_wait = float(self.settings.get("RESTART_PRE_SERVER_SEARCH_WAIT_SN", 6.0))
-                self.log(f"Oyun baslatildi, {int(pre_wait)} sn sunucu ekrani bekleniyor...")
-                self.gui_queue.put(("status_line1", (f"Sunucu ekrani bekleniyor ({int(pre_wait)} sn)...", "orange")))
-                for _ in range(int(pre_wait)):
-                    time.sleep(1.0)
+            kill_wait = float(self.settings.get("RESTART_AFTER_KILL_WAIT_SN", 1.0))
+            time.sleep(max(0.2, kill_wait))
 
-                # Sunucu/karakter seç, harita yükle, etkinlik oku kapat, Z tuşu
-                self.log("Login proseduru baslatiliyor...")
-                self.gui_queue.put(("status_line1", ("Giris yapiliyor...", "yellow")))
-                if hasattr(self, "automator"):
-                    self.automator.login_to_game()
-
-                self.running.set()
-                self.gui_queue.put(("status_line1", ("Hazır", "green")))
-                self.gui_queue.put(("status_line2", ("", "white")))
-                self.log("Restart sonrasi running=True yapildi.")
-                self.log_training_outcome("restart", {"status": "success"})
-                return True
-            except Exception as e:
-                self.log(f"Restart sirasinda hata: {e}")
-                self.log_training_outcome("restart", {"status": "failed", "error": str(e)})
+            if not os.path.exists(self.game_path):
+                self.log("HATA: game_path bulunamadi.")
                 return False
-            finally:
-                self._is_restarting = False
+
+            os.startfile(self.game_path)
+
+            # Karakter/sunucu secim ekraninin gelmesi icin kisa bekleme.
+            pre_wait = float(self.settings.get("RESTART_PRE_SERVER_SEARCH_WAIT_SN", 6.0))
+            self.log(f"Oyun baslatildi, {int(pre_wait)} sn sunucu ekrani bekleniyor...")
+            self.gui_queue.put(("status_line1", (f"Sunucu ekrani bekleniyor ({int(pre_wait)} sn)...", "orange")))
+            for _ in range(int(pre_wait)):
+                time.sleep(1.0)
+
+            # Sunucu/karakter sec, harita yukle, etkinlik oku kapat, Z tusu.
+            self.log("Login proseduru baslatiliyor...")
+            self.gui_queue.put(("status_line1", ("Giris yapiliyor...", "yellow")))
+            if hasattr(self, "automator"):
+                self.automator.login_to_game()
+
+            self.running.set()
+            self.gui_queue.put(("status_line1", ("Hazir", "green")))
+            self.gui_queue.put(("status_line2", ("", "white")))
+            self.log("Restart sonrasi running=True yapildi.")
+            self.log_training_outcome("restart", {"status": "success"})
+            return True
+        except Exception as e:
+            self.log(f"Restart sirasinda hata: {e}")
+            self.log_training_outcome("restart", {"status": "failed", "error": str(e)})
+            return False
+        finally:
+            if lock_acquired:
+                try:
+                    self.action_lock.release()
+                except Exception:
+                    pass
+            self._is_restarting = False
 
     def _on_close(self):
         """Pencere kapatılırken temiz kapatma: seq_recorder ve diğer kaynakları serbest bırakır."""
         self.log("Uygulama kapatiliyor...")
+        try:
+            if hasattr(self, "user_monitor"):
+                self.user_monitor.shutdown()
+        except Exception:
+            pass
         try:
             if hasattr(self, "seq_recorder"):
                 self.seq_recorder.shutdown()

@@ -267,10 +267,8 @@ class GUIManager:
         self.root.title("LoA Bot v5.9 (Local-First)")
         self.root.configure(bg="black")
         self.root.wm_attributes("-topmost", True)
-        # Pencere yüksekliği: boss sayısına göre dinamik
-        n_boss = len(getattr(self.bot, "bosslar", {}))
-        win_h = 560 + n_boss * 24   # her boss satırı ~24px
-        self.root.geometry(f"320x{win_h}")
+        # Yükseklik içerikten sonra otomatik hesaplanacak.
+        self.root.geometry("320x1")
 
         # Durum Panel (2 Satır)
         self.title_label_line1 = tk.Label(self.root, text="Başlatılıyor...", bg="black", fg="cyan", font=("Consolas", 11, "bold"))
@@ -347,9 +345,13 @@ class GUIManager:
         self.ai_perf_label = tk.Label(self.ai_frame, text="Boss: 0 av | AI: 0%", bg="black", fg="#666666", font=("Consolas", 8), anchor="w")
         self.ai_perf_label.pack(fill=tk.X, padx=5, pady=(0, 3))
 
-        # Terminal Log Alanı — sabit yükseklik, expand=False (boss timers'ı itmez)
-        self.log_text_widget = tk.Text(self.root, height=6, bg="#101010", fg="lime", font=("Consolas", 9), state=tk.DISABLED, relief=tk.SOLID, bd=1)
-        self.log_text_widget.pack(fill=tk.X, expand=False, padx=10, pady=(5, 10))
+        # Terminal Log Alanı — 4 satır görünüm
+        self.log_text_widget = tk.Text(self.root, height=4, bg="#101010", fg="lime", font=("Consolas", 9), state=tk.DISABLED, relief=tk.SOLID, bd=1)
+        self.log_text_widget.pack(fill=tk.X, expand=False, padx=10, pady=(5, 2))
+
+        # Gereksiz alt boşluğu kaldırmak için pencereyi gerçek içerik yüksekliğine sabitle.
+        self.root.update_idletasks()
+        self.root.geometry(f"320x{self.root.winfo_reqheight()}")
 
         self._update_gui()
         self._created = True

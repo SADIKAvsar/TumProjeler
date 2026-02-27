@@ -45,7 +45,7 @@ class MemoryManager:
 
         # Auto-save timer
         self.last_save_time = time.time()
-        self.save_interval = 300  # 5 minutes
+        self.save_interval = 60  # 1 dakika: NVMe SSD icin guvenli; veri kaybi riskini 5 dk'dan 60s'e dusuruyor
 
         # Backup configuration
         self.backup_interval = 86400  # 24 hours

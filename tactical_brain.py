@@ -1,14 +1,14 @@
-"""
-tactical_brain.py — Karar Orkestrasyon Katmanı
+﻿"""
+tactical_brain.py â€” Karar Orkestrasyon KatmanÄ±
 ================================================
-Kural tabanlı AIEngine (Tier-1) + Alamet PyTorch Modeli (Tier-2) +
-Ollama VL Model (Tier-2b) birlikte çalışır.
+Kural tabanlÄ± AIEngine (Tier-1) + Alamet PyTorch Modeli (Tier-2) +
+Ollama VL Model (Tier-2b) birlikte Ã§alÄ±ÅŸÄ±r.
 
-Karar hiyerarşisi:
-  1. AIEngine    → boss seçimi, freeze teşhisi (kural tabanlı, her zaman aktif)
-  2. Alamet AI   → ekran görüntüsünden faz + aksiyon tahmini (CUDA, güven eşiği kontrolü)
-  2b. Ollama VL  → PyTorch güveni düşükse devreye girer (yerel VL model, isteğe bağlı)
-  3. Fallback    → ikisi de başarısızsa "CONTINUE_FARM" (mevcut kural tabanlı akış)
+Karar hiyerarÅŸisi:
+  1. AIEngine    â†’ boss seÃ§imi, freeze teÅŸhisi (kural tabanlÄ±, her zaman aktif)
+  2. Alamet AI   â†’ ekran gÃ¶rÃ¼ntÃ¼sÃ¼nden faz + aksiyon tahmini (CUDA, gÃ¼ven eÅŸiÄŸi kontrolÃ¼)
+  2b. Ollama VL  â†’ PyTorch gÃ¼veni dÃ¼ÅŸÃ¼kse devreye girer (yerel VL model, isteÄŸe baÄŸlÄ±)
+  3. Fallback    â†’ ikisi de baÅŸarÄ±sÄ±zsa "CONTINUE_FARM" (mevcut kural tabanlÄ± akÄ±ÅŸ)
 """
 
 from __future__ import annotations
@@ -19,12 +19,12 @@ from ai_engine import AIEngine
 from click_knowledge import ClickKnowledgeBase
 from pytorch_inference import ACTION_COMMAND_MAP, PyTorchInferenceEngine
 
-# ── Güven Eşikleri ───────────────────────────────────────────────────────
-# Modelin %90 aksiyon / %86 faz doğruluğu göz önüne alındığında güvenli eşikler.
+# â”€â”€ GÃ¼ven EÅŸikleri â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Modelin %90 aksiyon / %86 faz doÄŸruluÄŸu gÃ¶z Ã¶nÃ¼ne alÄ±ndÄ±ÄŸÄ±nda gÃ¼venli eÅŸikler.
 _ACTION_CONF_THRESHOLD: float = 0.60
 _PHASE_CONF_THRESHOLD: float = 0.55
 
-# "Eylem yok" olarak değerlendirilen aksiyon isimleri → CONTINUE_FARM'a düşülür
+# "Eylem yok" olarak deÄŸerlendirilen aksiyon isimleri â†’ CONTINUE_FARM'a dÃ¼ÅŸÃ¼lÃ¼r
 _NOOP_ACTIONS = frozenset({"noop", "unknown", "key_unknown"})
 
 
@@ -32,12 +32,12 @@ class TacticalBrain:
     """
     Bot karar merkezi.
 
-    Dışa açık metodlar:
-      decide_next_target(ready_bosses) → seçilen boss dict veya None
-      analyze_combat()                 → faz analizi dict veya None
-      get_next_move()                  → AI komut dict veya "CONTINUE_FARM"
-      get_ai_statistics()              → birleşik istatistik dict
-      shutdown()                       → temiz kapatma
+    DÄ±ÅŸa aÃ§Ä±k metodlar:
+      decide_next_target(ready_bosses) â†’ seÃ§ilen boss dict veya None
+      analyze_combat()                 â†’ faz analizi dict veya None
+      get_next_move()                  â†’ AI komut dict veya "CONTINUE_FARM"
+      get_ai_statistics()              â†’ birleÅŸik istatistik dict
+      shutdown()                       â†’ temiz kapatma
     """
 
     def __init__(self, bot):
@@ -51,7 +51,7 @@ class TacticalBrain:
         self._init_click_knowledge()
         self.bot.log("TacticalBrain: karar motoru hazir.")
 
-    # ── Başlatma ──────────────────────────────────────────────────────────
+    # â”€â”€ BaÅŸlatma â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _init_inference_engine(self):
         try:
@@ -63,7 +63,7 @@ class TacticalBrain:
                 )
             else:
                 self.bot.log(
-                    "TacticalBrain: Alamet modeli yuklenemedi — "
+                    "TacticalBrain: Alamet modeli yuklenemedi â€” "
                     "kural tabanli mod aktif.",
                     level="WARNING",
                 )
@@ -75,7 +75,7 @@ class TacticalBrain:
             self._inference = None
 
     def _init_click_knowledge(self):
-        """ClickKnowledgeBase'i başlatır — YAML statik + öğrenilmiş dinamik koordinatlar."""
+        """ClickKnowledgeBase'i baÅŸlatÄ±r â€” YAML statik + Ã¶ÄŸrenilmiÅŸ dinamik koordinatlar."""
         try:
             cfg = getattr(self.bot, "general_cfg", {})
             w = int(cfg.get("screen_w", 2560))
@@ -83,7 +83,7 @@ class TacticalBrain:
             self._click_kb = ClickKnowledgeBase(screen_w=w, screen_h=h, logger=self.bot.log)
             summary = self._click_kb.summary()
             self.bot.log(
-                f"TacticalBrain: ClickKnowledgeBase hazir — "
+                f"TacticalBrain: ClickKnowledgeBase hazir â€” "
                 f"statik={summary['static_entries']}, "
                 f"dinamik={summary['dynamic_entries']}"
             )
@@ -96,16 +96,32 @@ class TacticalBrain:
 
     def _resolve_click_coord(self, phase: str) -> Optional[Dict]:
         """
-        mouse_click kararı için koordinat çözer.
+        mouse_click kararÄ± iÃ§in koordinat Ã§Ã¶zer.
         1. ClickKnowledgeBase (dinamik > statik)
-        2. Bulunamazsa None döner (caller fallback'e geçer)
+        2. Bulunamazsa None dÃ¶ner (caller fallback'e geÃ§er)
         """
         if self._click_kb is None:
             return None
         return self._click_kb.get_coord(phase, "mouse_click")
+    def _derive_navigation_protocol(self, boss: Dict) -> str:
+        """
+        AI kararinda ui_protocol yoksa v5.8 disiplinine gore guvenli protokol sec.
+        """
+        current_region = "UNKNOWN"
+        try:
+            if hasattr(self.bot, "location_manager"):
+                current_region = str(self.bot.location_manager.get_region_name() or "UNKNOWN").upper()
+        except Exception:
+            current_region = "UNKNOWN"
+
+        katman = str((boss or {}).get("katman_id", "")).lower()
+        target_loc = "KATMAN_1" if "katman_1" in katman else "KATMAN_2"
+        if current_region != target_loc:
+            return "FULL_MENU_SEQUENCE"
+        return "SHORT_LIST_SEQUENCE"
 
     def _init_ollama(self):
-        """Ollama VL istemcisini ayarlardan başlatır (isteğe bağlı)."""
+        """Ollama VL istemcisini ayarlardan baÅŸlatÄ±r (isteÄŸe baÄŸlÄ±)."""
         settings = getattr(self.bot, "settings", {})
         if not settings.get("OLLAMA_ENABLED", True):
             self.bot.log("TacticalBrain: Ollama devre disi (OLLAMA_ENABLED=false).")
@@ -135,27 +151,48 @@ class TacticalBrain:
                 level="WARNING",
             )
 
-    # ── Kural Tabanlı: Boss Seçimi (Tier-1) ──────────────────────────────
+    # â”€â”€ Kural TabanlÄ±: Boss SeÃ§imi (Tier-1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def decide_next_target(self, ready_bosses: List[Dict]) -> Optional[Dict]:
-        """AIEngine kural motoru ile bir sonraki boss'u seçer."""
+        """AIEngine kural motoru ile bir sonraki boss'u seÃ§er."""
         if not self.ai_engine or not ready_bosses:
             return None
 
-        boss_name = self.ai_engine.decide_next_boss(ready_bosses)
-        if not boss_name:
+        ai_decision = self.ai_engine.decide_next_boss(ready_bosses)
+        if not ai_decision:
             return None
+
+        boss_name = None
+        ui_protocol = None
+        if isinstance(ai_decision, dict):
+            boss_name = (
+                ai_decision.get("decision")
+                or ai_decision.get("boss_name")
+                or ai_decision.get("boss")
+            )
+            raw_protocol = str(ai_decision.get("ui_protocol", "")).strip().upper()
+            if raw_protocol:
+                ui_protocol = raw_protocol
+        else:
+            boss_name = ai_decision
 
         for boss in ready_bosses:
             if str(boss.get("aciklama", "")) == str(boss_name):
+                protocol = ui_protocol or self._derive_navigation_protocol(boss)
+                boss["_ui_protocol"] = str(protocol).strip().upper()
+                self.bot.log(
+                    f"TacticalBrain: ui_protocol koprusu aktif -> {boss.get('_ui_protocol')} "
+                    f"(boss={boss.get('aciklama')})",
+                    level="DEBUG",
+                )
                 return boss
         return None
 
-    # ── Alamet AI: Savaş Faz Analizi (Tier-2) ────────────────────────────
+    # â”€â”€ Alamet AI: SavaÅŸ Faz Analizi (Tier-2) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def analyze_combat(self) -> Optional[Dict]:
         """
-        Mevcut ekran görüntüsünden savaş fazını analiz eder.
+        Mevcut ekran gÃ¶rÃ¼ntÃ¼sÃ¼nden savaÅŸ fazÄ±nÄ± analiz eder.
 
         Returns:
             {
@@ -165,7 +202,7 @@ class TacticalBrain:
                 "action_confidence": float,
                 "inference_ms": float,
             }
-            veya None (model yüklü değil / güven düşük)
+            veya None (model yÃ¼klÃ¼ deÄŸil / gÃ¼ven dÃ¼ÅŸÃ¼k)
         """
         result = self._inference_predict()
         if result is None:
@@ -173,7 +210,7 @@ class TacticalBrain:
 
         if result["phase_confidence"] < _PHASE_CONF_THRESHOLD:
             self.bot.log(
-                f"TacticalBrain: Faz guven dusuk ({result['phase_confidence']:.0%}) — "
+                f"TacticalBrain: Faz guven dusuk ({result['phase_confidence']:.0%}) â€” "
                 "sonuc geri cekildi.",
                 level="DEBUG",
             )
@@ -187,14 +224,14 @@ class TacticalBrain:
             "inference_ms": result["inference_ms"],
         }
 
-    # ── Alamet AI: Sonraki Hareket (Tier-2) ──────────────────────────────
+    # â”€â”€ Alamet AI: Sonraki Hareket (Tier-2) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def get_next_move(self):
         """
-        Ekran görüntüsünden sonraki hareketi belirler.
+        Ekran gÃ¶rÃ¼ntÃ¼sÃ¼nden sonraki hareketi belirler.
 
         Returns:
-            dict  → AI'nın yüksek güvenle belirlediği komut:
+            dict  â†’ AI'nÄ±n yÃ¼ksek gÃ¼venle belirlediÄŸi komut:
                     {
                         "source": "alamet_ai",
                         "action": str,          # "key_a", "mouse_click" vb.
@@ -205,7 +242,7 @@ class TacticalBrain:
                         "inference_ms": float,
                     }
 
-            "CONTINUE_FARM"  → AI yoksa / güven düşükse / noop aksiyonsa
+            "CONTINUE_FARM"  â†’ AI yoksa / gÃ¼ven dÃ¼ÅŸÃ¼kse / noop aksiyonsa
         """
         result = self._inference_predict()
         if result is None:
@@ -217,7 +254,7 @@ class TacticalBrain:
         if action_conf < _ACTION_CONF_THRESHOLD or phase_conf < _PHASE_CONF_THRESHOLD:
             self.bot.log(
                 f"TacticalBrain: Guven esigi altinda "
-                f"(aksiyon={action_conf:.0%}, faz={phase_conf:.0%}) — "
+                f"(aksiyon={action_conf:.0%}, faz={phase_conf:.0%}) â€” "
                 "Ollama deneniyor...",
                 level="DEBUG",
             )
@@ -235,13 +272,13 @@ class TacticalBrain:
         if command["type"] == "noop":
             return "CONTINUE_FARM"
 
-        # mouse_click → koordinat çöz (ClickKnowledgeBase: dinamik > YAML statik)
+        # mouse_click â†’ koordinat Ã§Ã¶z (ClickKnowledgeBase: dinamik > YAML statik)
         if command["type"] == "click":
             coord = self._resolve_click_coord(result["phase_name"])
             if coord is None:
                 self.bot.log(
                     f"TacticalBrain: mouse_click koordinati bulunamadi "
-                    f"(faz={result['phase_name']}) — CONTINUE_FARM'a dusuluyor.",
+                    f"(faz={result['phase_name']}) â€” CONTINUE_FARM'a dusuluyor.",
                     level="WARNING",
                 )
                 return "CONTINUE_FARM"
@@ -257,7 +294,7 @@ class TacticalBrain:
             "inference_ms": result["inference_ms"],
         }
 
-    # ── İstatistikler ─────────────────────────────────────────────────────
+    # â”€â”€ Ä°statistikler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def get_ai_statistics(self) -> Dict:
         stats: Dict = {}
@@ -276,17 +313,17 @@ class TacticalBrain:
             stats["ollama"] = {"available": False}
         return stats
 
-    # ── Kapatma ───────────────────────────────────────────────────────────
+    # â”€â”€ Kapatma â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def shutdown(self):
-        """Bot kapanırken VRAM monitör thread'ini temizler."""
+        """Bot kapanÄ±rken VRAM monitÃ¶r thread'ini temizler."""
         if self._inference:
             self._inference.shutdown()
 
-    # ── Dahili Yardımcı ───────────────────────────────────────────────────
+    # â”€â”€ Dahili YardÄ±mcÄ± â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _ollama_ask(self) -> Optional[Dict]:
-        """Ollama VL modelinden ekran yorumu ve aksiyon kararı alır."""
+        """Ollama VL modelinden ekran yorumu ve aksiyon kararÄ± alÄ±r."""
         if self._ollama is None:
             return None
         if not hasattr(self.bot, "vision") or self.bot.vision is None:
@@ -315,7 +352,7 @@ class TacticalBrain:
             if command["type"] == "noop":
                 return None
 
-            # mouse_click → koordinat çöz
+            # mouse_click â†’ koordinat Ã§Ã¶z
             current_phase = getattr(self.bot, "_global_phase", "UNKNOWN")
             if command["type"] == "click":
                 coord = self._resolve_click_coord(current_phase)
@@ -340,7 +377,7 @@ class TacticalBrain:
             return None
 
     def _inference_predict(self) -> Optional[Dict]:
-        """Inference engine hazır ve vision aktifse ekrandan tahmin yapar."""
+        """Inference engine hazÄ±r ve vision aktifse ekrandan tahmin yapar."""
         if (
             self._inference is None
             or not self._inference.is_loaded
@@ -349,3 +386,4 @@ class TacticalBrain:
         ):
             return None
         return self._inference.predict_from_screen(self.bot.vision)
+

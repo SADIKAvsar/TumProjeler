@@ -5,26 +5,85 @@ class CombatManager:
     def __init__(self, bot):
         self.bot = bot
 
+    # =========================================================
+    # DURUM SORGULAMA
+    # =========================================================
+
+    def is_in_active_combat(self) -> bool:
+        """
+        Bot'un o an fiziksel olarak bir boss'a saldirip saldirmadığını döner.
+
+        Sadece 'attacking_target_aciklama' flagini değil; navigasyon,
+        dövüş VE loot fazlarını birlikte kontrol eder.
+        Etkinlik girişi öncesi bu metod 'False' döndürene kadar beklemek
+        gereklidir (State Lock'u önler).
+        """
+        attacking = bool(getattr(self.bot, "attacking_target_aciklama", None))
+        phase = str(getattr(self.bot, "_global_phase", "")).strip().upper()
+        # NAV + COMBAT + LOOT → hepsi aktif dövüş zincirine dahil
+        in_active_phase = phase in {"NAV_PHASE", "COMBAT_PHASE", "LOOT_PHASE"}
+        return attacking or in_active_phase
+
+    # =========================================================
+    # KESILMIŞ DÖVÜŞ FALLBACK
+    # =========================================================
+
+    def recalculate_times_interrupted(self, interrupted_boss: dict) -> None:
+        """
+        Boss dövüşü etkinlik veya timeout nedeniyle kesildiğinde çağrılır.
+        Boss öldürülmedi; ancak spawn_time stale (geçmiş) kalmamalı.
+
+        Kural:
+        - Spawn_time geçmişte kaldıysa → now + periyot ile shift et.
+        - Spawn_time henüz gelmemişse → dokunma (doğal zamanını beklesin).
+        """
+        periyot = float(interrupted_boss.get("periyot_saat", 0)) * 3600.0
+        if periyot <= 0:
+            return
+
+        now = time.time()
+        current_spawn = interrupted_boss.get("spawn_time")
+
+        # Spawn zamanı zaten geçmişse (boss spawn etmişti ama biz kesilmek zorunda kaldık)
+        if not isinstance(current_spawn, (int, float)) or current_spawn <= now:
+            yeni_spawn = now + periyot
+            with self.bot.action_lock:
+                self.bot._set_spawn_time_abs(
+                    interrupted_boss["aciklama"], yeni_spawn, source="interrupted_fallback"
+                )
+            self.bot.log(
+                f"[INTERRUPT] Spawn fallback: {interrupted_boss['aciklama']} -> "
+                f"{time.strftime('%H:%M:%S', time.localtime(yeni_spawn))} "
+                f"(dovus kesildi, bir sonraki periyot hesaplandi)"
+            )
+        else:
+            # Spawn zamanı ileride → dokunma, bot zamanında tekrar dener
+            self.bot.log(
+                f"[INTERRUPT] Spawn korundu: {interrupted_boss['aciklama']} "
+                f"(spawn henüz gelmemişti, aynı zaman geçerli)",
+                level="DEBUG",
+            )
+
     def _is_next_boss_urgent(self, current_boss=None) -> bool:
+        # DRY: Birincil mantik BossManager'da tutulur; oraya delege et.
+        bm = getattr(self.bot, "boss_manager", None)
+        if bm is not None:
+            return bm._is_next_boss_urgent(current_boss=current_boss)
+
+        # Fallback: boss_manager henuz hazir degilse (erken init) yerel hesapla.
         now = time.time()
         urgent_window = float(self.bot.settings.get("URGENT_NEXT_BOSS_THRESHOLD_SN", 15.0))
         candidates = []
-
         for b in self.bot.bosslar.values():
             if current_boss and b.get("aciklama") == current_boss.get("aciklama"):
                 continue
-
             spawn_ts = b.get("spawn_time")
             if not isinstance(spawn_ts, (int, float)):
                 continue
-
             head_start = float(b.get("head_start_saniye", 0))
-            ready_at = spawn_ts - head_start
-            candidates.append(ready_at - now)
-
+            candidates.append((spawn_ts - head_start) - now)
         if not candidates:
             return False
-
         return min(candidates) <= urgent_window
 
     def _should_skip_optional_check(
@@ -348,7 +407,9 @@ class CombatManager:
             # Eğer kill_time modu seçiliyse veya ilk kesimse mecburen şimdiki anı referans al
             yeni_spawn = now + periyot
 
-        self.bot._set_spawn_time_abs(killed_boss["aciklama"], yeni_spawn, source="automation")
+        # Thread-safe yazma: automation_thread ayni anda bot.bosslar okuyabilir.
+        with self.bot.action_lock:
+            self.bot._set_spawn_time_abs(killed_boss["aciklama"], yeni_spawn, source="automation")
         self.bot.log(
             f"Spawn guncellendi: {killed_boss['aciklama']} -> "
             f"{time.strftime('%H:%M:%S', time.localtime(yeni_spawn))}"
@@ -358,19 +419,20 @@ class CombatManager:
         # Varsayilan kapali, cunku gercek spawn zamaninda drift biriktirebilir.
         if bool(self.bot.settings.get("ADJUST_OTHER_BOSS_TIMERS_FOR_LOOT", False)):
             loot_finish = attack_start + float(self.bot.settings.get("POST_ATTACK_WAIT_SN", 30))
-            for next_b in self.bot.bosslar.values():
-                if next_b["katman_id"] == killed_boss["katman_id"] and next_b["aciklama"] != killed_boss["aciklama"]:
-                    next_spawn = next_b.get("spawn_time")
-                    if not isinstance(next_spawn, (int, float)):
-                        continue
-                    walk_t = self.get_walk_time(killed_boss["aciklama"], next_b["aciklama"])
-                    if walk_t > (next_spawn - loot_finish):
-                        drift = walk_t - (next_spawn - loot_finish)
-                        self.bot._set_spawn_time_abs(next_b["aciklama"], next_spawn + drift, source="automation")
-                        self.bot.log(
-                            f"Spawn kaydirma uygulandi: {next_b['aciklama']} (+{int(drift)}s)",
-                            level="DEBUG",
-                        )
+            with self.bot.action_lock:
+                for next_b in self.bot.bosslar.values():
+                    if next_b["katman_id"] == killed_boss["katman_id"] and next_b["aciklama"] != killed_boss["aciklama"]:
+                        next_spawn = next_b.get("spawn_time")
+                        if not isinstance(next_spawn, (int, float)):
+                            continue
+                        walk_t = self.get_walk_time(killed_boss["aciklama"], next_b["aciklama"])
+                        if walk_t > (next_spawn - loot_finish):
+                            drift = walk_t - (next_spawn - loot_finish)
+                            self.bot._set_spawn_time_abs(next_b["aciklama"], next_spawn + drift, source="automation")
+                            self.bot.log(
+                                f"Spawn kaydirma uygulandi: {next_b['aciklama']} (+{int(drift)}s)",
+                                level="DEBUG",
+                            )
 
     def get_walk_time(self, a, b):
         if not bool(self.bot.settings.get("WALK_TIME_ENABLED", False)):

@@ -7,3 +7,9 @@ __pycache__/
 models/active_model/click_knowledge.json
 data/
 backup/
+*.pt
+*.pth
+image/
+images/
+.tmp.driveupload/
+Systemmesajı
