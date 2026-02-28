@@ -219,6 +219,19 @@ class LoABot:
                 self.reward_engine.reset_episode()
             self.training_logger.end_episode(status="completed", reason=reason, metrics=reward_summary)
 
+    def _seal_visual_event(self, stage: str, extra: dict = None) -> None:
+        """
+        Görsel tespit anını SequentialRecorder'a bildirir.
+        area_check / spawn_check / victory gibi vision.find() başarılarında çağrılır.
+        Hata durumunda sessizce geçer, main thread bloklanmaz.
+        """
+        if not hasattr(self, "seq_recorder") or self.seq_recorder is None:
+            return
+        try:
+            self.seq_recorder.seal_action(f"visual_{stage}", extra=extra or {})
+        except Exception:
+            pass
+
     def capture_local_decision_frame(
         self, action_name: str, payload: dict = None, phase: str = None, stage: str = None
     ) -> str:

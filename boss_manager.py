@@ -361,6 +361,10 @@ class BossManager:
                     area_found = True
                     target["_area_check_ok"] = True
                     self.bot.log(f"[FlexScan] AREA bulundu: {area_image}")
+                    self.bot._seal_visual_event(
+                        "area_check",
+                        extra={"boss_id": str(target.get("aciklama", "")), "image": area_image},
+                    )
 
             # â”€â”€ 2. SPAWN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             # T=0'dan itibaren taranÄ±r; bir kez bulununca tekrar aranmaz.
@@ -373,6 +377,10 @@ class BossManager:
                     ):
                         spawn_found = True
                         self.bot.log(f"[FlexScan] SPAWN bulundu: {img}")
+                        self.bot._seal_visual_event(
+                            "spawn_check",
+                            extra={"boss_id": str(target.get("aciklama", "")), "image": img},
+                        )
                         break
 
             # â”€â”€ 3. SALDIRI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -398,6 +406,10 @@ class BossManager:
                         shadow_force_capture=True,
                     ):
                         victory_found = True
+                        self.bot._seal_visual_event(
+                            "victory",
+                            extra={"boss_id": str(target.get("aciklama", "")), "image": img},
+                        )
                         self.bot.log(f"[FlexScan] VICTORY â€” erken cikis: {img}")
                         break
                 if victory_found:
@@ -613,11 +625,14 @@ class BossManager:
                     success = self._execute_single_attack_attempt(target, selected_protocol)
 
                     if success:
+                        # Ganimet, zincir ve stratejik bekleme BİTTİKTEN SONRA flush:
+                        # post-attack seal'lerin aynı eğitim episoduna girmesi için
+                        # signal_success(), _handle_post_attack_logic() arkasına alındı.
+                        self._handle_post_attack_logic(target)
                         seq = getattr(self.bot, "seq_recorder", None)
                         if seq is not None:
                             boss_id = str(target.get("aciklama", "unknown"))
                             flush_done = bool(seq.signal_success(reason=f"boss_{boss_id}_success"))
-                        self._handle_post_attack_logic(target)
                         if hasattr(self.bot, "stop_global_mission"):
                             self.bot.stop_global_mission(reason=f"boss_{target.get('aciklama')}_success")
                     else:

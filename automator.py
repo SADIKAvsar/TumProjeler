@@ -461,7 +461,7 @@ class Automator:
                         fallback_coord=coord,
                         context_target=context_target,
                         duration=seq_click_duration,
-                        seal_label="seq_click",
+                        seal_label=f"seq_{label}" if label else "seq_click",
                     )
 
                 elif action == "press_key":
@@ -485,7 +485,7 @@ class Automator:
                         fallback_coord=coord,
                         context_target=context_target,
                         duration=seq_click_duration,
-                        seal_label="seq_katman_secimi",
+                        seal_label=f"seq_katman_{katman_label}" if katman_label else "seq_katman_secimi",
                     )
 
                 elif action == "boss_secimi":
@@ -516,7 +516,7 @@ class Automator:
                         fallback_coord=coord,
                         context_target=context_target,
                         duration=seq_click_duration,
-                        seal_label="seq_boss_secimi",
+                        seal_label=f"seq_boss_{click_label}" if click_label else "seq_boss_secimi",
                     )
 
                 else:
@@ -675,9 +675,6 @@ class Automator:
     def return_to_exp_farm(self, force_restart_if_failed=True):
         """Kullanici talebi: ek exp_farm_sequence olmadan EXP_FARM kabul et."""
         if self.bot.location_manager.get_region_name() == "EXP_FARM":
-            # EKLENEN KISIM: Zaten ana haritadaysak da kaydi durdur
-            if hasattr(self.bot, "auto_stop_recording"):
-                self.bot.auto_stop_recording()
             return True
 
         self.bot.log("Automator: EXP_FARM'a donus baslatildi.")
@@ -690,11 +687,6 @@ class Automator:
 
         self.bot.location_manager.set_current_location_by_name("EXP_FARM")
         self.bot.stop_global_mission(reason="exp_farm_return")
-
-        # EKLENEN KISIM: Basarili bir donus islemi yapildigi anda kaydi kapat
-        if hasattr(self.bot, "auto_stop_recording"):
-            self.bot.auto_stop_recording()
-
         return True
 
     def safe_exit_map(self):

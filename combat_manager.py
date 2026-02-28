@@ -383,7 +383,10 @@ class CombatManager:
             reason=f"loot_wait_{int(loot_wait)}s",
         )
         self.bot.log(f"Ganimet toplama bekleme: {int(loot_wait)} sn")
-        return self.bot._interruptible_wait(loot_wait)
+        self.bot._seal_visual_event("loot_start", extra={"wait_sn": int(loot_wait)})
+        result = self.bot._interruptible_wait(loot_wait)
+        self.bot._seal_visual_event("loot_end", extra={"completed": result})
+        return result
 
     def recalculate_times(self, killed_boss, attack_start):
         periyot = float(killed_boss.get("periyot_saat", 0)) * 3600.0
@@ -478,14 +481,51 @@ class CombatManager:
 
                 if action == "wait":
                     self.bot.log(f"AI: {next_boss['aciklama']} icin haritada kaliniyor.")
+                    self.bot._seal_visual_event(
+                        "strategic_wait",
+                        extra={
+                            "decision": "wait",
+                            "next_boss": str(next_boss.get("aciklama", "")),
+                            "time_until_next": round(time_until_next, 1),
+                            "confidence": round(float(decision.get("confidence", 0)), 2),
+                            "source": "ai",
+                        },
+                    )
                     return
 
+                self.bot._seal_visual_event(
+                    "strategic_return",
+                    extra={
+                        "decision": "return_to_farm",
+                        "next_boss": str(next_boss.get("aciklama", "")),
+                        "time_until_next": round(time_until_next, 1),
+                        "source": "ai",
+                    },
+                )
                 self.bot.automator.return_to_exp_farm()
                 return
 
         threshold = float(self.bot.settings.get("BOSS_SWITCH_THRESHOLD_SN", 91))
         if next_boss["katman_id"] == current["katman_id"] and time_until_next < threshold:
             self.bot.log(f"Stratejik Bekleme: {next_boss['aciklama']} icin haritada kaliniyor.")
+            self.bot._seal_visual_event(
+                "strategic_wait",
+                extra={
+                    "decision": "wait",
+                    "next_boss": str(next_boss.get("aciklama", "")),
+                    "time_until_next": round(time_until_next, 1),
+                    "source": "rule",
+                },
+            )
             return
 
+        self.bot._seal_visual_event(
+            "strategic_return",
+            extra={
+                "decision": "return_to_farm",
+                "next_boss": str(next_boss.get("aciklama", "")),
+                "time_until_next": round(time_until_next, 1),
+                "source": "rule",
+            },
+        )
         self.bot.automator.return_to_exp_farm()
