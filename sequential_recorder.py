@@ -34,7 +34,7 @@ STUCK_THRESHOLD_SEC: float = 2.0
 STUCK_MIN_PIXEL_DELTA: float = 3.0
 JPEG_QUALITY: int = 92
 DEFAULT_RECORDER_ROOT: str = r"D:\LoABot_Training_Data\sequences"
-DEFAULT_RAM_FRAME_LIMIT: int = 100
+DEFAULT_RAM_FRAME_LIMIT: int = 600
 
 # Actions expected to move character position.
 _WALK_ACTIONS: frozenset[str] = frozenset({

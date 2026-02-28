@@ -563,7 +563,7 @@ class BossManager:
         self.bot.log(f"[BOSS_LOOP] hedef={boss_id} protocol={protocol_name}", level="DEBUG")
         self.bot.attacking_target_aciklama = boss_id
         try:
-            self.bot.auto_start_recording("boss_attack", timeout_sec=300)
+            # auto_start_recording automation_thread'de cagrilir (EXP_FARM'dayken + warmup)
             return bool(self.execute_precise_boss_flow(target, ui_protocol=protocol_name))
         finally:
             self.bot.attacking_target_aciklama = None
@@ -621,6 +621,13 @@ class BossManager:
                 target, selected_protocol = self._select_target_with_protocol(ready)
                 success = False
                 flush_done = False
+
+                # Episode başlangıcı: EXP_FARM'dayken kaydı başlat.
+                # 1.0 saniyelik warmup: rolling buffer (WINDOW_SIZE=10 frame, 10 FPS)
+                # dolmadan ilk navigasyon seal'i boş pencere yakalar.
+                self.bot.auto_start_recording("boss_attack", timeout_sec=300)
+                time.sleep(1.0)  # Buffer warmup: 10 frame / 10 FPS = 1.0s
+
                 try:
                     success = self._execute_single_attack_attempt(target, selected_protocol)
 
