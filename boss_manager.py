@@ -483,7 +483,7 @@ class BossManager:
         """
         90s kurali:
         - ayni katman
-        - kalan sure < 90
+        - head_start dikkate alinmis kalan sure < 90
         - yurume suresi < 90
         """
         now = time.time()
@@ -501,7 +501,10 @@ class BossManager:
             return None
 
         next_boss = sorted(same_map, key=lambda x: x["spawn_time"])[0]
-        remaining = next_boss["spawn_time"] - now
+        head_start = float(next_boss.get("head_start_saniye", 0.0))
+        # Fast-chain karari spawn anina gore degil "navigasyon baslama" anina gore verilir.
+        ready_at = float(next_boss["spawn_time"]) - max(0.0, head_start)
+        remaining = ready_at - now
         walk_time_enabled = bool(self.settings.get("WALK_TIME_ENABLED", False))
         walk_time = self.bot.combat.get_walk_time(current["aciklama"], next_boss["aciklama"]) if walk_time_enabled else 0
 

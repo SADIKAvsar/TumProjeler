@@ -22,7 +22,7 @@ class PopupManager:
 
         while True:
             # Bot duraklatılmışsa veya başka bir kritik aksiyon varsa bekle
-            if not self.bot.running.is_set() or self.bot.paused or self.bot.action_lock.locked():
+            if not self.bot.running.is_set() or self.bot.paused or self.bot.is_action_lock_busy():
                 time.sleep(5)
                 continue
 

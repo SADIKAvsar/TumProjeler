@@ -498,6 +498,29 @@ class CombatManager:
 
         next_boss = upc[0]
         time_until_next = next_boss["spawn_time"] - now
+        head_start = float(next_boss.get("head_start_saniye", 0.0))
+        time_until_ready = max(0.0, float(time_until_next) - max(0.0, head_start))
+        same_layer = next_boss["katman_id"] == current["katman_id"]
+        same_layer_threshold = float(self.bot.settings.get("SAME_LAYER_KEEP_THRESHOLD_SN", 300.0))
+
+        # Kritik kural: ayni katmanda ve "ready" penceresi yakin ise AI return_to_farm dese bile haritada kal.
+        if same_layer and time_until_ready < same_layer_threshold:
+            self.bot.log(
+                f"Stratejik Bekleme: {next_boss['aciklama']} icin haritada kaliniyor "
+                f"(ready={int(time_until_ready)}s, head_start={int(head_start)}s)."
+            )
+            self.bot._seal_visual_event(
+                "strategic_wait",
+                extra={
+                    "decision": "wait",
+                    "next_boss": str(next_boss.get("aciklama", "")),
+                    "time_until_next": round(time_until_next, 1),
+                    "time_until_ready": round(time_until_ready, 1),
+                    "head_start": round(head_start, 1),
+                    "source": "rule_same_layer",
+                },
+            )
+            return
 
         ai_engine = getattr(self.bot, "brain", None)
         ai_engine = getattr(ai_engine, "ai_engine", None) if ai_engine else None
@@ -540,14 +563,14 @@ class CombatManager:
                         "decision": "return_to_farm",
                         "next_boss": str(next_boss.get("aciklama", "")),
                         "time_until_next": round(time_until_next, 1),
-                        "source": "ai",
-                    },
-                )
-                self.bot.automator.return_to_exp_farm()
-                return
+                    "source": "ai",
+                },
+            )
+            self.bot.automator.return_to_exp_farm()
+            return
 
         threshold = float(self.bot.settings.get("BOSS_SWITCH_THRESHOLD_SN", 91))
-        if next_boss["katman_id"] == current["katman_id"] and time_until_next < threshold:
+        if same_layer and time_until_ready < threshold:
             self.bot.log(f"Stratejik Bekleme: {next_boss['aciklama']} icin haritada kaliniyor.")
             self.bot._seal_visual_event(
                 "strategic_wait",
@@ -555,6 +578,8 @@ class CombatManager:
                     "decision": "wait",
                     "next_boss": str(next_boss.get("aciklama", "")),
                     "time_until_next": round(time_until_next, 1),
+                    "time_until_ready": round(time_until_ready, 1),
+                    "head_start": round(head_start, 1),
                     "source": "rule",
                 },
             )
