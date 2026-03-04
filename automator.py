@@ -1,7 +1,17 @@
-﻿import os
+# -*- coding: utf-8 -*-
+import os
 import time
 
 import pyautogui
+
+# Fallback ekran yakalama için (vision.capture_full_screen yoksa)
+try:
+    import mss as _mss_fallback
+    import numpy as _np_fallback
+    import cv2 as _cv2_fallback
+    _HAS_FALLBACK_CAPTURE = True
+except ImportError:
+    _HAS_FALLBACK_CAPTURE = False
 
 from utils import BOT_IS_CLICKING_EVENT
 from user_input_monitor import BOT_IS_PRESSING_KEY_EVENT
@@ -164,15 +174,14 @@ class Automator:
                 frame = vision.capture_full_screen()
             else:
                 # vision_manager içinde capture_full_screen yoksa, mss ile kendimiz yakalıyoruz (Çökmeyi engeller!)
-                import mss
-                import numpy as np
-                import cv2
-                with mss.mss() as sct:
+                if not _HAS_FALLBACK_CAPTURE:
+                    return None, 0.0
+                with _mss_fallback.mss() as sct:
                     # Ana monitörü yakala
                     monitor = sct.monitors[1]
                     shot = sct.grab(monitor)
                     # YOLO BGR formatını sever, dönüştürüyoruz
-                    frame = cv2.cvtColor(np.array(shot), cv2.COLOR_BGRA2BGR)
+                    frame = _cv2_fallback.cvtColor(_np_fallback.array(shot), _cv2_fallback.COLOR_BGRA2BGR)
 
             if frame is None:
                 return None, 0.0
@@ -286,6 +295,15 @@ class Automator:
                 self._update_seq_position(target.get("x", 0), target.get("y", 0))
             # 10 FPS sekans muhurlme
             self._seal_seq_action(seal_label)
+            # ── Video: bot tıklamasını logla ──
+            vid = getattr(self.bot, "video_recorder", None)
+            if vid is not None and vid.is_recording:
+                vid.log_action(
+                    event_type="bot_click",
+                    data={"x": int(target.get("x", 0)), "y": int(target.get("y", 0))},
+                    source="bot",
+                    action_label=str(label or seal_label),
+                )
             return True
         except Exception as exc:
             self.bot.log_training_action(
@@ -393,6 +411,20 @@ class Automator:
                     "decision_id": decision_id,
                 },
             )
+            # ── Video: agentic tıklamayı logla ──
+            vid = getattr(self.bot, "video_recorder", None)
+            if vid is not None and vid.is_recording:
+                vid.log_action(
+                    event_type="bot_click",
+                    data={
+                        "x": int(target.get("x", 0)),
+                        "y": int(target.get("y", 0)),
+                        "source": source,
+                        "yolo_conf": float(yolo_conf),
+                    },
+                    source="bot",
+                    action_label=str(label or seal_label),
+                )
             if perf_enabled:
                 total_ms = (time.perf_counter() - total_t0) * 1000.0
                 self.bot.log(
@@ -554,6 +586,15 @@ class Automator:
         )
         # 10 FPS sekans muhurlme
         self._seal_seq_action(f"key_{key}")
+        # ── Video: bot tuş basmasını logla ──
+        vid = getattr(self.bot, "video_recorder", None)
+        if vid is not None and vid.is_recording:
+            vid.log_action(
+                event_type="bot_key",
+                data={"key": str(key)},
+                source="bot",
+                action_label=str(label or f"bot_key_{key}"),
+            )
         return True
 
     def _record_click_to_kb(self, coord: dict) -> None:
@@ -571,24 +612,12 @@ class Automator:
             pass
 
     def _seal_seq_action(self, action_label: str, extra: dict = None):
-        """SequentialRecorder'a aksiyon bildirimi gonderir (hata durumunda sessizce gecer)."""
-        try:
-            if hasattr(self.bot, "seq_recorder"):
-                self.bot.seq_recorder.seal_action(action_label, extra=extra)
-        except Exception:
-            pass
+        """No-op: SequentialRecorder kaldırıldı. Çağrı noktaları geriye uyumluluk için korundu."""
+        pass
 
     def _boundary_start(self, action_label: str, extra: dict = None) -> None:
-        """
-        Aksiyon emri verilmeden ONCE cagrılır (fare hareketinden önce).
-        mark_action_start'a yonlendirir; T-window kareleri 'initiation' olarak dondurulur.
-        Hata durumunda sessizce gecilir, main thread bloklanmaz.
-        """
-        try:
-            if hasattr(self.bot, "seq_recorder"):
-                self.bot.seq_recorder.mark_action_start(action_label, extra=extra)
-        except Exception:
-            pass
+        """No-op: SequentialRecorder kaldırıldı."""
+        pass
 
     def _boundary_end(
         self,
@@ -596,26 +625,12 @@ class Automator:
         result_status: str = "unknown",
         extra: dict = None,
     ) -> None:
-        """
-        Aksiyon tamamlanip karakter stabil olduktan SONRA cagrılır.
-        mark_action_end'e yonlendirir; tek kare 'termination' olarak kaydedilir.
-        Hata durumunda sessizce gecilir, main thread bloklanmaz.
-        """
-        try:
-            if hasattr(self.bot, "seq_recorder"):
-                self.bot.seq_recorder.mark_action_end(
-                    action_label, result_status=result_status, extra=extra
-                )
-        except Exception:
-            pass
+        """No-op: SequentialRecorder kaldırıldı."""
+        pass
 
     def _update_seq_position(self, x: float, y: float):
-        """SequentialRecorder'a konum proxy'si gonderir (stuck tespiti icin)."""
-        try:
-            if hasattr(self.bot, "seq_recorder"):
-                self.bot.seq_recorder.update_position(float(x), float(y))
-        except Exception:
-            pass
+        """No-op: SequentialRecorder kaldırıldı."""
+        pass
 
     def login_to_game(self):
         """Restart sonrasi tam giris sekansi:

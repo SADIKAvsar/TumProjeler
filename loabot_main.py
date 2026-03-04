@@ -1,4 +1,5 @@
-﻿import os
+# -*- coding: utf-8 -*-
+import os
 import threading
 import time
 import tkinter as tk
@@ -20,7 +21,7 @@ from pvp_manager import PvPManager
 from popup_manager import PopupManager
 from tactical_brain import TacticalBrain
 from training_logger import TrainingLogger
-from sequential_recorder import SequentialRecorder
+from video_recorder import VideoRecorder
 from user_input_monitor import UserInputMonitor
 from reward_engine import RewardEngine
 
@@ -49,7 +50,7 @@ class LoABot:
         self.training_logger = TrainingLogger(self)
 
         self.vision = VisionManager(self)
-        self.seq_recorder = SequentialRecorder(self)
+        self.video_recorder = VideoRecorder(self)
 
         self.game = GameManager(self)
         self.combat = CombatManager(self)
@@ -62,6 +63,10 @@ class LoABot:
         self.popup_manager = PopupManager(self)
         self.user_monitor = UserInputMonitor(self)
         self.reward_engine = RewardEngine(self)
+
+        # VideoRecorder'ı UserInputMonitor'a bağla (init sırası gereği)
+        if hasattr(self, "video_recorder") and hasattr(self, "user_monitor"):
+            self.video_recorder.late_subscribe()
 
         # 2) Threadleri baslat
         self._start_threads()
@@ -120,8 +125,6 @@ class LoABot:
         threading.Thread(target=self.event_manager.event_monitor_thread, daemon=True).start()
         threading.Thread(target=self.pvp_manager.monitor_thread, daemon=True).start()
         threading.Thread(target=self.popup_manager.monitor_thread, daemon=True).start()
-        if hasattr(self.vision, "shadow_mode_thread"):
-            threading.Thread(target=self.vision.shadow_mode_thread, daemon=True).start()
 
     def _initialize_boss_data(self):
         """Boss runtime alanlarını başlat (backup'tan restore edildi)."""
@@ -188,20 +191,6 @@ class LoABot:
                 **self._global_mission_extra,
             },
         )
-        if hasattr(self, "vision"):
-            try:
-                if hasattr(self.vision, "set_global_mission_phase"):
-                    self.vision.set_global_mission_phase(
-                        namespace=phase,
-                        stage=stage,
-                        reason=reason,
-                        extra=self._global_mission_extra,
-                    )
-                elif hasattr(self.vision, "set_mission_namespace"):
-                    # Geriye donuk uyumluluk (eski Vision API)
-                    self.vision.set_mission_namespace(phase, stage)
-            except Exception as exc:
-                self.log(f"Vision mission senkron hatasi: {exc}", level="WARNING")
 
     def start_global_mission(self, phase: str, stage: str, reason: str = "", extra: dict = None):
         self.set_global_mission_phase(phase, stage, reason, extra)
@@ -221,29 +210,29 @@ class LoABot:
 
     def _seal_visual_event(self, stage: str, extra: dict = None) -> None:
         """
-        Görsel tespit anını SequentialRecorder'a bildirir.
+        Görsel tespit anını video kaydına bildirir.
         area_check / spawn_check / victory gibi vision.find() başarılarında çağrılır.
         Hata durumunda sessizce geçer, main thread bloklanmaz.
         """
-        if not hasattr(self, "seq_recorder") or self.seq_recorder is None:
-            return
-        try:
-            self.seq_recorder.seal_action(f"visual_{stage}", extra=extra or {})
-        except Exception:
-            pass
+        vid = getattr(self, "video_recorder", None)
+        if vid is not None and vid.is_recording:
+            try:
+                vid.log_action(
+                    event_type="visual_detect",
+                    data=extra or {},
+                    source="bot",
+                    action_label=f"visual_{stage}",
+                )
+            except Exception:
+                pass
 
     def capture_local_decision_frame(
         self, action_name: str, payload: dict = None, phase: str = None, stage: str = None
     ) -> str:
-        """SequentialRecorder + AI egitimi icin karar ani karesi (snapshot)."""
-        if not hasattr(self, "vision"):
-            return ""
-        return self.vision.save_ai_decision_snapshot(
-            action_name=action_name,
-            payload=payload,
-            phase=phase or self._global_phase,
-            stage=stage or self._global_stage,
-        )
+        """AI karar anı karesi — shadow mode kaldırıldı, stub olarak kalıyor."""
+        # Eski shadow mode kaldırıldı. Bu metod geriye uyumluluk için
+        # boş string döner. Gelecekte video frame referansı eklenebilir.
+        return ""
 
     def toggle_recording(self):
         # MANUEL KAYIT TAMAMEN DEVRE DIŞI BIRAKILDI
@@ -322,10 +311,7 @@ class LoABot:
         )
 
     def auto_start_recording(self, trigger_type: str, timeout_sec: float = 120.0) -> bool:
-        """Sadece sistem (boss/event manager) tarafından tetiklenen saf otomatik kayıt."""
-        if not hasattr(self, "seq_recorder") or self.seq_recorder is None:
-            return False
-
+        """Sadece sistem (boss/event manager) tarafından tetiklenen otomatik kayıt."""
         # Zaten bir kayıt aktifse, üst üste başlatmayı engelle
         if getattr(self, "_auto_log_active", False):
             return False
@@ -334,15 +320,18 @@ class LoABot:
         self._auto_log_active = True
         self._auto_log_trigger = trigger_type
 
-        self.seq_recorder.start(trigger_type=trigger_type)
+        # Video kaydını başlat
+        vid = getattr(self, "video_recorder", None)
+        if vid is not None:
+            vid.start(trigger_type=trigger_type)
 
-        # Güvenlik zamanlayıcısı (Kayıt sonsuza kadar açık kalmasın diye)
+        # Güvenlik zamanlayıcısı (kayıt sonsuza kadar açık kalmasın)
         if hasattr(self, "_auto_log_timer") and self._auto_log_timer:
             self._auto_log_timer.cancel()
-            
+
         self._auto_log_timer = threading.Timer(timeout_sec, self.auto_stop_recording)
         self._auto_log_timer.start()
-        
+
         return True
 
     def auto_stop_recording(self):
@@ -351,13 +340,16 @@ class LoABot:
             trigger = str(getattr(self, "_auto_log_trigger", "")).strip().lower()
             self.log("[AUTO-LOG] Kayıt durduruluyor.", level="DEBUG")
             self._auto_log_active = False
-            
+
             if hasattr(self, "_auto_log_timer") and self._auto_log_timer:
                 self._auto_log_timer.cancel()
                 self._auto_log_timer = None
-                
-            if hasattr(self, "seq_recorder") and self.seq_recorder:
-                self.seq_recorder.stop()
+
+            # Video kaydını durdur
+            vid = getattr(self, "video_recorder", None)
+            if vid is not None and vid.is_recording:
+                vid.stop(success=True, reason=f"auto_stop_{trigger}")
+
             self._auto_log_trigger = ""
 
             if trigger == "boss_attack" and getattr(self, "attacking_target_aciklama", None):
@@ -480,7 +472,7 @@ class LoABot:
             self._is_restarting = False
 
     def _on_close(self):
-        """Pencere kapatılırken temiz kapatma: seq_recorder ve diğer kaynakları serbest bırakır."""
+        """Pencere kapatılırken temiz kapatma: tüm kaynakları serbest bırakır."""
         self.log("Uygulama kapatiliyor...")
         try:
             if hasattr(self, "user_monitor"):
@@ -488,8 +480,8 @@ class LoABot:
         except Exception:
             pass
         try:
-            if hasattr(self, "seq_recorder"):
-                self.seq_recorder.shutdown()
+            if hasattr(self, "video_recorder"):
+                self.video_recorder.shutdown()
         except Exception:
             pass
         try:

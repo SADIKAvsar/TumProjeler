@@ -1,4 +1,4 @@
-# modules/gui_manager.py
+# -*- coding: utf-8 -*-
 import tkinter as tk
 from tkinter import messagebox, simpledialog
 from datetime import datetime
@@ -34,7 +34,7 @@ class GUIManager:
             elif len(parts) == 2: return parts[0]*60 + parts[1]
             elif len(parts) == 1: return parts[0]
             return None
-        except: return None
+        except Exception: return None
 
     def _create_round_button(self, parent, symbol, color, command, col):
         canvas = tk.Canvas(parent, width=65, height=65, bg="black", highlightthickness=0, cursor="hand2")
@@ -77,7 +77,7 @@ class GUIManager:
                 elif task == "status_line2":
                     if self.title_label_line2:
                         self.title_label_line2.config(text=data[0], fg=data[1])
-            except: break
+            except Exception: break
 
     def _update_spawn_time_in_gui(self, aciklama, spawn_time, source):
         widgets = self.gui_widgets.get(aciklama)
@@ -264,7 +264,7 @@ class GUIManager:
             pass
 
     def create_gui(self):
-        self.root.title("LoA Bot v5.9 (Local-First)")
+        self.root.title("LoABot v5.9: AgenticNet")
         self.root.configure(bg="black")
         self.root.wm_attributes("-topmost", True)
         # Yükseklik içerikten sonra otomatik hesaplanacak.

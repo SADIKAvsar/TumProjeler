@@ -32,7 +32,7 @@ class MemoryManager:
         if db_path:
             resolved_db_path = db_path
         else:
-            preferred = Path(r"E:\LoABot_Training_Data\runtime_data\ai_memory.json")
+            preferred = Path(r"D:\LoABot_Training_Data\runtime_data\ai_memory.json")
             resolved_db_path = str(preferred) if preferred.parent.exists() else project_path("data/ai_memory.json")
 
         self.db_path = Path(resolved_db_path)

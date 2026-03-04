@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import time
 
 
@@ -17,11 +18,38 @@ class CombatManager:
         dövüş VE loot fazlarını birlikte kontrol eder.
         Etkinlik girişi öncesi bu metod 'False' döndürene kadar beklemek
         gereklidir (State Lock'u önler).
+
+        ★ v5.9.1 FIX: Staleness koruması eklendi.
+          _global_phase eski değerle takılı kalırsa (stop_global_mission
+          çağrılmamışsa) 120 saniye sonra otomatik IDLE'a düşer.
+          Bu, State Lock bug'ının kök nedenini ortadan kaldırır.
         """
         attacking = bool(getattr(self.bot, "attacking_target_aciklama", None))
+
         phase = str(getattr(self.bot, "_global_phase", "")).strip().upper()
-        # NAV + COMBAT + LOOT → hepsi aktif dövüş zincirine dahil
         in_active_phase = phase in {"NAV_PHASE", "COMBAT_PHASE", "LOOT_PHASE"}
+
+        # ★ Staleness Guard: Phase aktif görünüyor ama attacking hedef yok
+        #   → Phase stale kalmış olabilir (State Lock kök nedeni).
+        #   120 saniyeden uzun süredir aktif phase + hedef yoksa → temizle.
+        if in_active_phase and not attacking:
+            phase_ts = getattr(self.bot, "_global_phase_ts", None)
+            if isinstance(phase_ts, (int, float)):
+                stale_limit = float(self.bot.settings.get("PHASE_STALE_TIMEOUT_SN", 120.0))
+                if (time.time() - phase_ts) > stale_limit:
+                    self.bot.log(
+                        f"[STATE_LOCK_GUARD] Stale phase tespit edildi: "
+                        f"phase={phase} suresi={time.time() - phase_ts:.0f}s > {stale_limit:.0f}s | "
+                        f"IDLE'a sifirlanıyor.",
+                        level="WARNING",
+                    )
+                    self.bot._global_phase = "IDLE"
+                    return False
+            else:
+                # Timestamp yoksa sadece attacking flag'e bak
+                # (phase bilgisi güvenilmez — stale olabilir)
+                return False
+
         return attacking or in_active_phase
 
     # =========================================================
@@ -258,6 +286,8 @@ class CombatManager:
             reason=f"legacy_boss_{target.get('aciklama')}",
             extra={"boss_id": str(target.get("aciklama", "unknown"))},
         )
+        # ★ Staleness guard
+        self.bot._global_phase_ts = time.time()
 
         current_region = self.bot.location_manager.get_region_name()
         target_loc = "KATMAN_1" if "katman_1" in str(target.get("katman_id", "")).lower() else "KATMAN_2"
@@ -382,10 +412,18 @@ class CombatManager:
             stage="loot_wait",
             reason=f"loot_wait_{int(loot_wait)}s",
         )
+        # ★ Staleness guard: loot phase başlangıç zamanını kaydet
+        self.bot._global_phase_ts = time.time()
         self.bot.log(f"Ganimet toplama bekleme: {int(loot_wait)} sn")
         self.bot._seal_visual_event("loot_start", extra={"wait_sn": int(loot_wait)})
         result = self.bot._interruptible_wait(loot_wait)
         self.bot._seal_visual_event("loot_end", extra={"completed": result})
+        # ★ FIX: Loot bitti — phase'i hemen temizle.
+        #   _handle_post_attack_logic chain veya strategic_wait'e gidecek;
+        #   onlar tekrar set edebilir ama aradaki boşlukta LOOT kalmamalı.
+        if hasattr(self.bot, "_global_phase"):
+            self.bot._global_phase = "IDLE"
+            self.bot._global_phase_ts = time.time()
         return result
 
     def recalculate_times(self, killed_boss, attack_start):
@@ -394,24 +432,27 @@ class CombatManager:
             return
 
         spawn_mode = str(self.bot.settings.get("SPAWN_RECALC_MODE", "fixed_cycle")).strip().lower()
-        planned_spawn = killed_boss.get("spawn_time")
         now = time.time()
 
-        # --- DRIFT-PROOF (KAYMA KORUMALI) ZAMAN HESAPLAMA ---
-        if spawn_mode == "fixed_cycle" and isinstance(planned_spawn, (int, float)) and planned_spawn > 0:
-            # Sıkı referans: Kesinlikle bir önceki planlı zamanın üzerine ekle
-            yeni_spawn = planned_spawn + periyot
-            
-            # Catch-up (Yetişme) Mantığı: Eğer bot kapalı kalmışsa veya bir boss atlandıysa,
-            # şimdiki zamanı (now) geçene kadar periyot ekleyerek oyun saatiyle tam senkron ol.
-            while yeni_spawn <= now:
-                yeni_spawn += periyot
-        else:
-            # Eğer kill_time modu seçiliyse veya ilk kesimse mecburen şimdiki anı referans al
-            yeni_spawn = now + periyot
-
-        # Thread-safe yazma: automation_thread ayni anda bot.bosslar okuyabilir.
+        # ── Thread-safe okuma ve yazma: planned_spawn dışarıda okunursa
+        #    başka bir thread arada spawn_time'ı değiştirebilir (race condition). ──
         with self.bot.action_lock:
+            planned_spawn = killed_boss.get("spawn_time")
+
+            # --- DRIFT-PROOF (KAYMA KORUMALI) ZAMAN HESAPLAMA ---
+            if spawn_mode == "fixed_cycle" and isinstance(planned_spawn, (int, float)) and planned_spawn > 0:
+                # Sıkı referans: Kesinlikle bir önceki planlı zamanın üzerine ekle
+                yeni_spawn = planned_spawn + periyot
+                
+                # Catch-up (Yetişme) Mantığı: Eğer bot kapalı kalmışsa veya bir boss atlandıysa,
+                # şimdiki zamanı (now) geçene kadar periyot ekleyerek oyun saatiyle tam senkron ol.
+                while yeni_spawn <= now:
+                    yeni_spawn += periyot
+            else:
+                # Eğer kill_time modu seçiliyse veya ilk kesimse mecburen şimdiki anı referans al
+                yeni_spawn = now + periyot
+
+            # Thread-safe yazma: automation_thread ayni anda bot.bosslar okuyabilir.
             self.bot._set_spawn_time_abs(killed_boss["aciklama"], yeni_spawn, source="automation")
         self.bot.log(
             f"Spawn guncellendi: {killed_boss['aciklama']} -> "

@@ -1,4 +1,5 @@
-﻿"""
+# -*- coding: utf-8 -*-
+"""
 sequential_recorder.py
 
 RAM-first sequential recorder for Agentic AI training data.
@@ -39,8 +40,8 @@ DEFAULT_RAM_FRAME_LIMIT: int = 600
 # Actions expected to move character position.
 _WALK_ACTIONS: frozenset[str] = frozenset({
     "mouse_click",
-    "seq_boss_secimi",
     "seq_katman_secimi",
+    "seq_boss_secimi",
 })
 
 
@@ -158,6 +159,8 @@ class SequentialRecorder:
 
         self._stop_event = threading.Event()
         self._mouse_listener = None
+        self._flush_completed = False          # signal_flush basarili oldu mu?
+        self._flush_completed_lock = threading.Lock()
 
         threading.Thread(
             target=self._capture_loop,
@@ -213,6 +216,8 @@ class SequentialRecorder:
             self._persist_frames = []
         self._clear_ram_events(log_drop=False)
         self._purge_pending_seal_events(log_drop=False)
+        with self._flush_completed_lock:
+            self._flush_completed = False
 
         self._last_input_ts = time.monotonic()
         self._last_pos_change_ts = 0.0
@@ -220,22 +225,72 @@ class SequentialRecorder:
         self.bot.log(f"SequentialRecorder: Kayit basladi. Oturum: {self._session_id}")
 
     def stop(self):
-        """Stop session; default behavior is FAIL-safe drop unless flushed."""
+        """Stop session.
+
+        KÖK NEDEN DÜZELTMESİ #2:
+        Eski kod _session_accepting_events=False'u EN BASTA yapıyordu.
+        Bu, _seal_worker_loop'un hâlâ işlediği eventlerin _stage_event
+        tarafından reddedilmesine neden oluyordu. Ayrıca flush_on_success_only
+        modunda stop() HER ZAMAN signal_fail çağırıyordu — signal_success
+        zaten başarıyla çalışmış olsa bile RAM'deki artıkları siliyordu.
+
+        Düzeltme: Kapıyı (accepting_events) flush/drain tamamlanana dek açık tut.
+        """
         with self._state_lock:
             if not self._recording:
                 return
             self._recording = False
-            self._session_accepting_events = False
+            # ÖNEMLİ: _session_accepting_events'i henüz kapatmıyoruz!
+            # Worker thread'in in-flight eventleri stage edebilmesi için açık kalmalı.
 
         with self._persist_lock:
             self._persist_action = None
             self._persist_phase = "UNKNOWN_PHASE"
             self._persist_frames = []
 
-        if self._flush_on_success_only:
-            dropped = self.signal_fail(reason="STOP", log_result=False)
-            stop_msg = f"RAM temizlenen event={dropped}"
+        # Daha önce signal_success/signal_flush çağrıldı mı?
+        with self._flush_completed_lock:
+            already_flushed = self._flush_completed
+
+        if already_flushed:
+            # signal_success zaten başarılı — RAM büyük ihtimalle boş.
+            # Kapıyı kapat ve kalan artıkları temizle.
+            with self._state_lock:
+                self._session_accepting_events = False
+            leftover = self._clear_ram_events(log_drop=False)
+            self._purge_pending_seal_events(log_drop=False)
+            stop_msg = f"flush_tamamlandi=True, artik_temizlenen={leftover[0]}"
+        elif self._flush_on_success_only:
+            # signal_success HİÇ çağrılmadı ama RAM'de veri olabilir.
+            # SON ŞANS: Tüm in-flight eventleri RAM'e taşı ve flush dene.
+            # (Kapıyı henüz kapatmıyoruz — _stage_event kabul etsin diye.)
+            try:
+                self._seal_queue.join()
+            except Exception:
+                pass
+            self._drain_seal_queue_to_ram()
+            with self._ram_lock:
+                remaining = len(self._ram_events)
+            if remaining > 0:
+                self.bot.log(
+                    f"SequentialRecorder: stop() icinde {remaining} event bulundu, "
+                    "son guvenlik flush'i deneniyor...",
+                    level="INFO",
+                )
+                flushed = self.signal_flush(reason="STOP_SAFETY_FLUSH")
+                # Şimdi kapıyı kapat
+                with self._state_lock:
+                    self._session_accepting_events = False
+                stop_msg = f"guvenlik_flush={'ok' if flushed else 'bos'}, event={remaining}"
+            else:
+                with self._state_lock:
+                    self._session_accepting_events = False
+                dropped = self.signal_fail(reason="STOP", log_result=False)
+                stop_msg = f"RAM temizlenen event={dropped}"
         else:
+            # flush_on_success_only=False → her şeyi yaz
+            with self._state_lock:
+                self._session_accepting_events = False
             self._purge_pending_seal_events(log_drop=False)
             flushed = self.signal_flush(reason="STOP_AUTO_FLUSH")
             stop_msg = f"stop_auto_flush={'ok' if flushed else 'empty'}"
@@ -254,9 +309,23 @@ class SequentialRecorder:
         return self.signal_flush(reason=reason)
 
     def signal_flush(self, reason: str = "FLUSH") -> bool:
-        """Flush staged RAM events to disk asynchronously."""
-        # Seal worker thread gecikmesinde event kaybi olmamasi icin kuyruktaki
-        # olaylari flush oncesi senkron sekilde RAM'e tasiyoruz.
+        """Flush staged RAM events to disk asynchronously.
+
+        KÖK NEDEN DÜZELTMESİ:
+        _seal_worker_loop ile _drain_seal_queue_to_ram aynı anda seal_queue'dan
+        okuyordu. Worker'ın dequeue ettiği ama henüz RAM'e taşımadığı eventler
+        drain tarafından görülemiyordu → signal_flush RAM'i boş sanıp False
+        dönüyordu → stop() her şeyi siliyordu.
+        Çözüm: join() ile worker'ın tüm in-flight eventleri tamamlamasını bekle.
+        """
+        # ADIM 1: Worker thread'in elindeki tüm in-flight eventleri
+        # RAM'e taşımasını (task_done) bekle.
+        try:
+            self._seal_queue.join()
+        except Exception:
+            pass
+
+        # ADIM 2: Kuyrukta kalan artıkları senkron taşı.
         self._drain_seal_queue_to_ram()
 
         with self._state_lock:
@@ -297,10 +366,13 @@ class SequentialRecorder:
             )
             return False
 
+        with self._flush_completed_lock:
+            self._flush_completed = True
+
         self.bot.log(
             f"SequentialRecorder: FLUSH kuyruga alindi. reason={reason} "
             f"event={event_count} frame={frame_count}",
-            level="DEBUG",
+            level="INFO",
         )
         return True
 
@@ -628,17 +700,21 @@ class SequentialRecorder:
                 self._flush_queue.task_done()
 
     def _stage_event(self, event: SealEvent):
-        """Append event to RAM circular buffer with frame-count cap."""
+        """
+        Append event to RAM circular buffer with frame-count cap.
+        KÖK NEDEN DÜZELTMESİ: 'recording' gate kontrolü kaldırıldı.
+        """
         if not event.frames:
             return
 
         with self._state_lock:
             active_session = self._session_id
             accepting = self._session_accepting_events
-            recording = self._recording
 
-        # Drop stale events (old session, fail state, or stopped state)
-        if (not accepting) or (not recording) or (event.session_id != active_session):
+        # ÖNEMLİ: Sadece 'accepting' ve 'session_id' kontrol edilir.
+        # 'self._recording' kontrolü burada YAPILMAZ; çünkü stop() çağrıldığında
+        # kuyruktaki son karelerin (exit_map anı) RAM'e taşınması gerekir.
+        if (not accepting) or (event.session_id != active_session):
             return
 
         dropped_events = 0
@@ -647,7 +723,7 @@ class SequentialRecorder:
             self._ram_events.append(event)
             self._ram_frames_total += len(event.frames)
 
-            # Keep only latest frames in RAM.
+            # RAM limitini koru (Circular Buffer)
             while self._ram_frames_total > self._max_ram_frames and self._ram_events:
                 old = self._ram_events.popleft()
                 dropped_events += 1
@@ -656,11 +732,10 @@ class SequentialRecorder:
 
         if dropped_events:
             self.bot.log(
-                f"SequentialRecorder: RAM circular trim. dropped_events={dropped_events} "
+                f"SequentialRecorder: RAM dairesel temizlik. dropped_events={dropped_events} "
                 f"dropped_frames={dropped_frames} limit={self._max_ram_frames}",
-                level="DEBUG",
+                level="DEBUG"
             )
-
     def _write_flush_job(self, job: FlushJob):
         """Write all staged events of a flush job to disk."""
         if not job.events:
@@ -724,23 +799,8 @@ class SequentialRecorder:
             filename = f"frame_{i:02d}.jpg"
             out_path = seq_dir / filename
             try:
-                # NumPy/OpenCV uyumlulugu: contiguous + uint8 formatina zorla.
-                save_ready_frame = np.ascontiguousarray(frame)
-                if save_ready_frame.dtype != np.uint8:
-                    save_ready_frame = save_ready_frame.astype(np.uint8, copy=False)
-
-                # Giris renk duzeni RGB ise OpenCV yazimi oncesi BGR'e cevir.
-                if save_ready_frame.ndim == 3:
-                    channels = int(save_ready_frame.shape[2])
-                    if channels == 3 and self._frame_input_color_order == "RGB":
-                        save_ready_frame = cv2.cvtColor(save_ready_frame, cv2.COLOR_RGB2BGR)
-                    elif channels == 4:
-                        code = (
-                            cv2.COLOR_RGBA2BGR
-                            if self._frame_input_color_order == "RGB"
-                            else cv2.COLOR_BGRA2BGR
-                        )
-                        save_ready_frame = cv2.cvtColor(save_ready_frame, code)
+                # DRY helper: BGR uint8 dönüşümü tek noktada yönetilir.
+                save_ready_frame = self._prepare_frame_for_save(frame)
 
                 ok = cv2.imwrite(
                     str(out_path),
@@ -836,6 +896,28 @@ class SequentialRecorder:
         )
         return True
 
+    def _prepare_frame_for_save(self, frame: np.ndarray) -> np.ndarray:
+        """Kare verisini OpenCV imwrite'a uygun BGR uint8 formatına dönüştürür.
+
+        DRY düzeltmesi: Bu mantık daha önce hem _package_sequence hem de
+        _write_boundary_frame içinde birebir tekrarlanıyordu.
+        """
+        out = np.ascontiguousarray(frame)
+        if out.dtype != np.uint8:
+            out = out.astype(np.uint8, copy=False)
+        if out.ndim == 3:
+            ch = int(out.shape[2])
+            if ch == 3 and self._frame_input_color_order == "RGB":
+                out = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
+            elif ch == 4:
+                code = (
+                    cv2.COLOR_RGBA2BGR
+                    if self._frame_input_color_order == "RGB"
+                    else cv2.COLOR_BGRA2BGR
+                )
+                out = cv2.cvtColor(out, code)
+        return out
+
     def _write_boundary_frame(
         self,
         seq_dir: Path,
@@ -848,20 +930,7 @@ class SequentialRecorder:
         """
         try:
             out_path = seq_dir / filename
-            save_frame = np.ascontiguousarray(frame)
-            if save_frame.dtype != np.uint8:
-                save_frame = save_frame.astype(np.uint8, copy=False)
-            if save_frame.ndim == 3:
-                ch = int(save_frame.shape[2])
-                if ch == 3 and self._frame_input_color_order == "RGB":
-                    save_frame = cv2.cvtColor(save_frame, cv2.COLOR_RGB2BGR)
-                elif ch == 4:
-                    code = (
-                        cv2.COLOR_RGBA2BGR
-                        if self._frame_input_color_order == "RGB"
-                        else cv2.COLOR_BGRA2BGR
-                    )
-                    save_frame = cv2.cvtColor(save_frame, code)
+            save_frame = self._prepare_frame_for_save(frame)
             cv2.imwrite(
                 str(out_path),
                 save_frame,

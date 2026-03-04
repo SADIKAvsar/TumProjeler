@@ -1,4 +1,5 @@
-﻿class LocationManager:
+﻿# -*- coding: utf-8 -*-
+class LocationManager:
     def __init__(self, bot, general_cfg: dict):
         self.bot = bot
         self.general_cfg = general_cfg

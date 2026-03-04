@@ -1,13 +1,16 @@
-﻿import datetime
+# -*- coding: utf-8 -*-
+import datetime
+import logging
 import os
 import threading
+from logging.handlers import RotatingFileHandler
 
 import cv2
 
 
 _MODULE_ROOT = os.path.dirname(os.path.abspath(__file__))
 _LEGACY_ROOT = os.path.dirname(_MODULE_ROOT)
-_PREFERRED_DATA_ROOT = os.environ.get("LOABOT_DATA_ROOT", r"E:\LoABot_Training_Data")
+_PREFERRED_DATA_ROOT = os.environ.get("LOABOT_DATA_ROOT", r"D:\LoABot_Training_Data")
 
 
 def project_path(rel_path: str) -> str:
@@ -44,11 +47,26 @@ else:
 BOT_IS_CLICKING_EVENT = threading.Event()
 
 
+# ── Performanslı loglama altyapısı ───────────────────────────────────────
+# Eski kod her log çağrısında os.makedirs + open/close yapıyordu.
+# Yoğun I/O trafiğinde (YOLO + SeqRec + Reward eşzamanlı) ciddi bottleneck.
+# RotatingFileHandler: tek dosya handle, 10 MB rotasyon, 5 yedek.
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+
+_log_formatter = logging.Formatter("[%(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+_file_handler = RotatingFileHandler(
+    LOG_FILE, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+)
+_file_handler.setFormatter(_log_formatter)
+
+_logger = logging.getLogger("LoABot")
+_logger.setLevel(logging.DEBUG)
+_logger.addHandler(_file_handler)
+
+
 def log_to_file(msg):
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(f"[{now}] {msg}\n")
+    """Thread-safe, buffered dosya loglama. Eski open/close yerine geçer."""
+    _logger.info(msg)
 
 
 def _safe_int(v, default):

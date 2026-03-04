@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import time, pyautogui, os
 from utils import log_to_file
 

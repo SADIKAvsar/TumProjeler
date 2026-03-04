@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import json
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -123,7 +124,7 @@ def create_dataloader(
         transform=transform,
         return_meta=False,
     )
-    workers = int(num_workers) if num_workers is not None else max(0, min(8, (os_cpu_count() - 1)))
+    workers = int(num_workers) if num_workers is not None else max(0, min(8, ((os.cpu_count() or 1) - 1)))
     collate = detection_collate if mode == "detection" else None
     dl = DataLoader(
         ds,

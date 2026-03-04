@@ -1,20 +1,40 @@
+﻿# -*- coding: utf-8 -*-
+"""
+train_agentic.py - LoABot v5.9 Agentic YZ Egitim Script'i (v2.0 - Temporal)
+==============================================================================
+Eski statik JPEG pipeline tamamen kaldırıldı.
+Yeni video tabanlı pipeline (video_dataset_builder.py) kullanılır.
+
+Mimari: Stacked 2D CNN
+  - T-1, T, T+1 frame'leri kanal boyutunda birlestirilir -> (B, 9, H, W)
+  - ResNet18 veya EfficientNet-B0 backbone (ilk conv: 3ch -> 9ch modifiye)
+  - Regression Head: Sigmoid -> (B, 2) normalize koordinat [0, 1]
+  - Loss: MSELoss - sadece mouse_click event'lerinde hesaplanır
+
+Ciktilar:
+  - best.pt / last.pt checkpoint'ları
+  - metrics.csv (epoch bazlı)
+  - TensorBoard logları
+  - summary.json
+
+Kullanım:
+  python train_agentic.py --video-root D:/LoABot_Training_Data/videos
+  python train_agentic.py --video-root D:/LoABot_Training_Data/videos --backbone efficientnet_b0 --epochs 30
+"""
+
 import argparse
-import bisect
 import csv
 import json
 import os
 import random
 import time
-from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
-import cv2
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
 
 try:
     from torchvision.models import (
@@ -23,22 +43,28 @@ try:
         efficientnet_b0,
         resnet18,
     )
-
     HAS_TORCHVISION = True
 except Exception:
     HAS_TORCHVISION = False
+# ----------------------------------------------------------------------
+from video_dataset_builder import build_dataloaders
 
+
+# ......................................................................
+#  YARDIMCI FONKSİYONLAR
+# ......................................................................
 
 def create_summary_writer(log_dir: Path):
+    """TensorBoard SummaryWriter olusturma (import hatalarını yakalar)."""
     try:
         from torch.utils.tensorboard import SummaryWriter as TBSummaryWriter
-
         return TBSummaryWriter(log_dir=str(log_dir)), True
     except Exception:
         return None, False
 
 
 def seed_everything(seed: int = 42):
+    """Tüm rastgelelik kaynaklarını sabitler (reproducibility)."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -46,226 +72,57 @@ def seed_everything(seed: int = 42):
         torch.cuda.manual_seed_all(seed)
 
 
-def read_jsonl(path: Path) -> List[Dict]:
-    rows = []
-    if not path.exists():
-        return rows
-    with open(path, "r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rows.append(json.loads(line))
-            except Exception:
-                continue
-    return rows
+def append_csv(path: Path, row: Dict):
+    """CSV dosyasına tek satır ekler (header otomatik)."""
+    exists = path.exists()
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        if not exists:
+            writer.writeheader()
+        writer.writerow(row)
 
 
-def parse_image_ts_from_name(image_path: str) -> Optional[float]:
-    """
-    Dosya adindan timestamp parse eder:
-    20260218_063205_265252_...
-    """
-    try:
-        stem = Path(image_path).stem
-        parts = stem.split("_")
-        if len(parts) < 3:
-            return None
-        dt_part = "_".join(parts[0:3])
-        dt = datetime.strptime(dt_part, "%Y%m%d_%H%M%S_%f")
-        return dt.timestamp()
-    except Exception:
-        return None
+def auto_num_workers() -> int:
+    """CPU cekirdegine göre optimal worker sayısı."""
+    c = int(os.cpu_count() or 1)
+    # Windows + decord tarafinda yüksek worker sayisi ffmpeg/decode OOM'a daha kolay
+    # gidebildigi icin konservatif seciyoruz.
+    if os.name == "nt":
+        return 1
+    return max(2, min(16, c - 2))
 
 
-def normalize_action_label(name: str, payload: Dict) -> str:
-    name = str(name or "").strip().lower()
-    payload = payload or {}
-    if name == "press_key":
-        key = str(payload.get("key", "")).strip().lower()
-        if key:
-            return f"key_{key}"
-        return "key_unknown"
-    if name == "click":
-        return "mouse_click"
-    if name == "sequence_step":
-        action = str(payload.get("action", "")).strip().lower()
-        if action == "press_key":
-            key = str(payload.get("key", "")).strip().lower()
-            if key:
-                return f"key_{key}"
-            return "key_unknown"
-        if action == "click":
-            return "mouse_click"
-        return f"seq_{action or 'unknown'}"
-    return f"act_{name or 'unknown'}"
+def auto_batch_size(device: torch.device, backbone: str) -> int:
+    """VRAM'e göre güvenli batch_size tahmini (9ch = ~3x bellek)."""
+    if device.type != "cuda":
+        return 8  # CPU: 9ch temporal daha agir
+    vram_gb = torch.cuda.get_device_properties(device).total_memory / (1024**3)
+    b = str(backbone).lower()
+    # 9 kanallı girdi normal 3ch'ye göre ~2-3x daha fazla bellek kullanır
+    if "efficientnet" in b:
+        if vram_gb >= 15.0:
+            return 48
+        if vram_gb >= 11.0:
+            return 32
+        return 16
+    # resnet18 - daha hafif
+    if vram_gb >= 15.0:
+        return 24
+    if vram_gb >= 11.0:
+        return 20
+    return 16
 
 
-def infer_action_label_from_stage(stage: str, phase_label: str) -> str:
-    s = str(stage or "").strip().lower()
-    p = str(phase_label or "").strip().upper()
-
-    if "attack_start" in s:
-        return "key_a"
-    if "anchor" in s or "spawn" in s or "area" in s or "victory" in s:
-        return "mouse_click"
-    if "transition" in s:
-        return "mouse_click"
-    if "loot" in s or "wait" in s or "mission_loop" in s:
-        return "noop"
-    if "event_action" in s:
-        return "event_sequence"
-    if "event_start" in s:
-        return "mouse_click"
-    if "event_wait" in s:
-        return "noop"
-
-    if p == "COMBAT_PHASE":
-        return "key_a"
-    if p == "NAV_PHASE":
-        return "mouse_click"
-    if p == "LOOT_PHASE":
-        return "noop"
-    if p == "EVENT_PHASE":
-        return "event_sequence"
-    return "unknown"
-
-
-def load_action_events(action_log_root: Path) -> Tuple[List[float], List[str]]:
-    if not action_log_root.exists():
-        return [], []
-
-    action_times = []
-    action_labels = []
-
-    for day_dir in action_log_root.glob("*"):
-        if not day_dir.is_dir():
-            continue
-        for file in day_dir.glob("*.jsonl"):
-            rows = read_jsonl(file)
-            for row in rows:
-                if str(row.get("event_type")) != "action":
-                    continue
-                ts = row.get("ts_unix")
-                if not isinstance(ts, (int, float)):
-                    continue
-                payload = row.get("payload") or {}
-                action_name = payload.get("name", "")
-                label = normalize_action_label(action_name, payload)
-                action_times.append(float(ts))
-                action_labels.append(label)
-
-    if not action_times:
-        return [], []
-
-    zipped = sorted(zip(action_times, action_labels), key=lambda x: x[0])
-    return [x[0] for x in zipped], [x[1] for x in zipped]
-
-
-def nearest_action_label(
-    image_ts: Optional[float],
-    action_times: List[float],
-    action_labels: List[str],
-    window_sec: float = 0.75,
-) -> Optional[str]:
-    if image_ts is None or not action_times:
-        return None
-
-    idx = bisect.bisect_left(action_times, image_ts)
-    candidates = []
-    if idx < len(action_times):
-        candidates.append(idx)
-    if idx - 1 >= 0:
-        candidates.append(idx - 1)
-
-    best = None
-    best_dist = None
-    for ci in candidates:
-        dist = abs(action_times[ci] - image_ts)
-        if best_dist is None or dist < best_dist:
-            best_dist = dist
-            best = ci
-
-    if best is None or best_dist is None or best_dist > window_sec:
-        return None
-    return action_labels[best]
-
-
-class AgenticManifestDataset(Dataset):
-    def __init__(
-        self,
-        rows: List[Dict],
-        image_size: int = 224,
-        train: bool = True,
-        action_to_id: Optional[Dict[str, int]] = None,
-        action_times: Optional[List[float]] = None,
-        action_labels: Optional[List[str]] = None,
-        action_window_sec: float = 0.75,
-    ):
-        self.rows = rows
-        self.image_size = int(image_size)
-        self.train = bool(train)
-        self.action_to_id = action_to_id or {}
-        self.action_times = action_times or []
-        self.action_labels = action_labels or []
-        self.action_window_sec = float(action_window_sec)
-
-    def __len__(self):
-        return len(self.rows)
-
-    def _augment(self, img: np.ndarray) -> np.ndarray:
-        if not self.train:
-            return img
-        if random.random() < 0.5:
-            img = cv2.flip(img, 1)
-        if random.random() < 0.2:
-            alpha = random.uniform(0.9, 1.1)
-            beta = random.uniform(-10, 10)
-            img = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
-        return img
-
-    def _preprocess(self, img: np.ndarray) -> torch.Tensor:
-        img = cv2.resize(img, (self.image_size, self.image_size), interpolation=cv2.INTER_AREA)
-        img = self._augment(img)
-        img = img.astype(np.float32) / 255.0
-        img = np.transpose(img, (2, 0, 1))
-        return torch.from_numpy(img).contiguous()
-
-    def __getitem__(self, idx: int):
-        row = self.rows[idx]
-        img_path = row["image_path"]
-        img = cv2.imread(img_path, cv2.IMREAD_COLOR)
-        if img is None:
-            raise FileNotFoundError(f"Goruntu bulunamadi: {img_path}")
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        x = self._preprocess(img)
-
-        phase_id = int(row.get("phase_id", -1))
-        stage = str(row.get("stage", ""))
-        phase_label = str(row.get("phase_label", "UNKNOWN_PHASE"))
-
-        action_label = row.get("action_label")
-        if not action_label:
-            image_ts = parse_image_ts_from_name(img_path)
-            action_label = nearest_action_label(
-                image_ts=image_ts,
-                action_times=self.action_times,
-                action_labels=self.action_labels,
-                window_sec=self.action_window_sec,
-            )
-        if not action_label:
-            action_label = infer_action_label_from_stage(stage=stage, phase_label=phase_label)
-
-        action_id = int(self.action_to_id.get(action_label, self.action_to_id.get("unknown", -100)))
-        return x, torch.tensor(phase_id, dtype=torch.long), torch.tensor(action_id, dtype=torch.long)
-
+# ......................................................................
+#  TINY BACKBONE (torchvision yoksa fallback)
+# ......................................................................
 
 class TinyBackbone(nn.Module):
-    def __init__(self, out_dim: int = 256):
+    """Hafif CNN backbone - torchvision kurulu olmadıYında fallback."""
+    def __init__(self, in_channels: int = 9, out_dim: int = 256):
         super().__init__()
         self.features = nn.Sequential(
-            nn.Conv2d(3, 32, 3, stride=2, padding=1),
+            nn.Conv2d(in_channels, 32, 3, stride=2, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
             nn.Conv2d(32, 64, 3, stride=2, padding=1),
@@ -282,265 +139,406 @@ class TinyBackbone(nn.Module):
     def forward(self, x):
         x = self.features(x)
         x = x.flatten(1)
-        x = self.proj(x)
-        return x
+        return self.proj(x)
 
 
-class AgenticNet(nn.Module):
+# ......................................................................
+#  TEMPORAL AGENTIC NET
+# ......................................................................
+
+class TemporalAgenticNet(nn.Module):
+    """
+    Temporal Stacked 2D CNN - Koordinat Regresyon Modeli.
+
+    Girdi : (B, 9, H, W)  - T-1, T, T+1 frame'leri kanal birlesik
+    ?ıktı : (B, 2)        - sigmoid normalize (x, y) koordinatları [0, 1]
+
+    İlk conv katmanı 3ch -> 9ch olarak genisletilir:
+      - Pretrained ise: orijinal 3ch agirlıkları 3 kez kopyalanır / 3'e bölünür
+      - Scratch ise: Kaiming init
+    """
+
     def __init__(
         self,
-        num_phases: int,
-        num_actions: int,
         backbone: str = "resnet18",
         pretrained: bool = True,
-        dropout: float = 0.2,
-        with_click_head: bool = False,   # True → koordinat regresyon kafası ekle
+        dropout: float = 0.3,
     ):
         super().__init__()
-        self.backbone_name  = backbone
-        self.with_click_head = with_click_head
+        self.backbone_name = backbone
         self.backbone, feat_dim = self._build_backbone(backbone, pretrained)
-        self.dropout     = nn.Dropout(float(dropout))
-        self.phase_head  = nn.Linear(feat_dim, int(num_phases))
-        self.action_head = nn.Linear(feat_dim, int(num_actions))
-        if with_click_head:
-            # (norm_x, norm_y) ∈ [0,1]  → ekran çözünürlüğünden bağımsız
-            self.click_head = nn.Sequential(
-                nn.Linear(feat_dim, 128),
-                nn.ReLU(),
-                nn.Linear(128, 2),
-                nn.Sigmoid(),   # 0–1 arası normalize koordinat
-            )
+        self.dropout = nn.Dropout(float(dropout))
+
+        # Koordinat regresyon kafası: (B, feat_dim) -> (B, 2)
+        self.coord_head = nn.Sequential(
+            nn.Linear(feat_dim, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2),
+            nn.Linear(256, 2),
+            nn.Sigmoid(),  # çıktı [0, 1] aralıYında - normalize koordinat
+        )
 
     def _build_backbone(self, backbone: str, pretrained: bool):
+        """Backbone olustur, ilk conv'u 9 kanal yapacak Yekilde modifiye et."""
         b = str(backbone).strip().lower()
+# ----------------------------------------------------------------------
         if HAS_TORCHVISION and b == "resnet18":
             weights = ResNet18_Weights.DEFAULT if pretrained else None
             model = resnet18(weights=weights)
-            in_features = model.fc.in_features
+            feat_dim = model.fc.in_features
+
+            # İlk conv: 3ch -> 9ch genislet
+            old_conv = model.conv1  # Conv2d(3, 64, 7, stride=2, padding=3)
+            model.conv1 = self._expand_first_conv(old_conv, 9, pretrained)
+
+            # Classifier kafasını kaldır (backbone sadece feature extractor)
             model.fc = nn.Identity()
-            return model, in_features
+            return model, feat_dim
+# ----------------------------------------------------------------------
         if HAS_TORCHVISION and b == "efficientnet_b0":
             weights = EfficientNet_B0_Weights.DEFAULT if pretrained else None
             model = efficientnet_b0(weights=weights)
-            in_features = model.classifier[1].in_features
+            feat_dim = model.classifier[1].in_features
+
+            # İlk conv: features[0][0] -> Conv2d(3, 32, 3, stride=2, padding=1)
+            old_conv = model.features[0][0]
+            model.features[0][0] = self._expand_first_conv(old_conv, 9, pretrained)
+
+            # Classifier kafasını kaldır
             model.classifier = nn.Identity()
-            return model, in_features
-        tiny = TinyBackbone(out_dim=256)
+            return model, feat_dim
+# ----------------------------------------------------------------------
+        tiny = TinyBackbone(in_channels=9, out_dim=256)
         return tiny, tiny.out_dim
 
-    def forward(self, x):
-        feat         = self.backbone(x)
-        feat         = self.dropout(feat)
-        phase_logits = self.phase_head(feat)
-        action_logits = self.action_head(feat)
-        if self.with_click_head:
-            click_coords = self.click_head(feat)   # shape: [B, 2]  (x_norm, y_norm)
-            return phase_logits, action_logits, click_coords
-        return phase_logits, action_logits
+    @staticmethod
+    def _expand_first_conv(
+        old_conv: nn.Conv2d,
+        new_in_channels: int,
+        copy_weights: bool,
+    ) -> nn.Conv2d:
+        """
+        Mevcut Conv2d'yi new_in_channels kabul edecek Yekilde genisletir.
+
+        Pretrained agirlık aktarımı:
+          - Orijinal (out, 3, kH, kW) -> (out, 9, kH, kW)
+          - 3 kopya / 3.0'a bölerek ortalama korunur (Xavier benzeri)
+        """
+        new_conv = nn.Conv2d(
+            in_channels=new_in_channels,
+            out_channels=old_conv.out_channels,
+            kernel_size=old_conv.kernel_size,
+            stride=old_conv.stride,
+            padding=old_conv.padding,
+            dilation=old_conv.dilation,
+            groups=old_conv.groups,
+            bias=(old_conv.bias is not None),
+            padding_mode=old_conv.padding_mode,
+        )
+
+        if copy_weights and old_conv.weight is not None:
+            with torch.no_grad():
+                # Orijinal agirlık: (out_ch, 3, kH, kW)
+                old_w = old_conv.weight.data
+                # 3 kez tekrarla -> (out_ch, 9, kH, kW), ortalaması korunsun
+                repeat_count = new_in_channels // old_w.shape[1]
+                remainder = new_in_channels % old_w.shape[1]
+
+                parts = [old_w] * repeat_count
+                if remainder > 0:
+                    parts.append(old_w[:, :remainder, :, :])
+
+                new_w = torch.cat(parts, dim=1) / float(repeat_count + (1 if remainder else 0))
+                new_conv.weight.data.copy_(new_w)
+
+                if old_conv.bias is not None and new_conv.bias is not None:
+                    new_conv.bias.data.copy_(old_conv.bias.data)
+        else:
+            # Kaiming init (scratch egitim)
+            nn.init.kaiming_normal_(new_conv.weight, mode="fan_out", nonlinearity="relu")
+
+        return new_conv
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: (B, 9, H, W) - birlestirilmis temporal frame'ler
+        Returns:
+            coords: (B, 2) - sigmoid normalize [0, 1] koordinatlar
+        """
+        feat = self.backbone(x)
+        feat = self.dropout(feat)
+        coords = self.coord_head(feat)
+        return coords
 
 
-def accuracy(logits: torch.Tensor, target: torch.Tensor, ignore_index: int = -100) -> float:
-    if target.numel() == 0:
+# ......................................................................
+#  METRİK HESAPLAMA
+# ......................................................................
+
+def compute_mean_euclidean_distance(
+    pred_coords: torch.Tensor,
+    target_coords: torch.Tensor,
+    mask: torch.Tensor,
+) -> float:
+    """
+    Masked örnekler üzerinden ortalama -klid mesafesi hesaplar.
+
+    Args:
+        pred_coords: (N, 2) model çıktısı [0, 1]
+        target_coords: (N, 2) gerçek koordinatlar [0, 1]
+        mask: (N,) bool - True olan indeksler dahil edilir
+
+    Returns:
+        Ortalama mesafe (float). Mask bossa 0.0.
+    """
+    if not mask.any():
         return 0.0
-    if ignore_index >= -1:
-        valid = target != ignore_index
-        if valid.sum().item() == 0:
-            return 0.0
-        logits = logits[valid]
-        target = target[valid]
-    pred = torch.argmax(logits, dim=1)
-    return float((pred == target).float().mean().item())
+    p = pred_coords[mask]
+    t = target_coords[mask]
+    # -klid mesafesi: sqrt((x1-x2)^2 + (y1-y2)^2)
+    dist = torch.sqrt(((p - t) ** 2).sum(dim=1) + 1e-8)
+    return float(dist.mean().item())
 
 
-def build_weights(rows: List[Dict], key: str, n_classes: int) -> torch.Tensor:
-    counts = Counter(int(r.get(key, -1)) for r in rows if int(r.get(key, -1)) >= 0)
-    if not counts:
-        return torch.ones(n_classes, dtype=torch.float32)
-    arr = np.ones(n_classes, dtype=np.float32)
-    for i in range(n_classes):
-        c = counts.get(i, 1)
-        arr[i] = 1.0 / float(c)
-    arr = arr / max(arr.mean(), 1e-6)
-    return torch.tensor(arr, dtype=torch.float32)
+# ......................................................................
+#  BATCH İŞLEME
+# ......................................................................
+
+def prepare_batch(batch: Dict, device: torch.device):
+    """
+    DataLoader batch'ini egitim döngüsü için hazırlar.
+
+    Döndürür:
+        stacked: (B, 9, H, W) - birlestirilmis frame'ler
+        coords:  (B, 2) - normalize koordinatlar
+        click_mask: (B,) - sadece mouse_click event'leri True
+    """
+    f_before = batch["frame_before"]   # (B, 3, H, W)
+    f_action = batch["frame_action"]   # (B, 3, H, W)
+    f_after = batch["frame_after"]     # (B, 3, H, W)
+
+    # Kanal boyutunda birlestir: (B, 9, H, W)
+    stacked = torch.cat([f_before, f_action, f_after], dim=1)
+    stacked = stacked.to(device, non_blocking=True)
+
+    coords = batch["coords"].to(device, non_blocking=True)  # (B, 2)
+
+    # Mouse click maskesi: sadece tıklama olaylarında koordinat loss'u hesapla
+    event_types = batch["event_type"]  # list[str]
+    click_mask = torch.tensor(
+        [et == "mouse_click" for et in event_types],
+        dtype=torch.bool,
+        device=device,
+    )
+
+    return stacked, coords, click_mask
 
 
-def auto_num_workers() -> int:
-    c = int(os.cpu_count() or 1)
-    return max(2, min(16, c - 2))
+# ......................................................................
+#  EĞİTİM ADIMI
+# ......................................................................
 
+def train_one_epoch(
+    model: nn.Module,
+    loader,
+    optimizer: torch.optim.Optimizer,
+    scaler: torch.amp.GradScaler,
+    loss_fn: nn.Module,
+    device: torch.device,
+    amp_enabled: bool,
+) -> Dict[str, float]:
+    """
+    Tek epoch egitim.
 
-def auto_batch_size(device: torch.device, backbone: str) -> int:
-    if device.type != "cuda":
-        return 16
-    vram_gb = torch.cuda.get_device_properties(device).total_memory / (1024**3)
-    b = str(backbone).lower()
-    if "efficientnet" in b:
-        if vram_gb >= 15.0:
-            return 96
-        if vram_gb >= 11.0:
-            return 64
-        return 32
-    # resnet18
-    if vram_gb >= 15.0:
-        return 128
-    if vram_gb >= 11.0:
-        return 96
-    return 48
-
-
-def ensure_action_vocab(rows_train: List[Dict], rows_test: List[Dict]) -> Dict[str, int]:
-    labels = set()
-    for r in rows_train + rows_test:
-        if r.get("action_label"):
-            labels.add(str(r["action_label"]))
-    if "unknown" not in labels:
-        labels.add("unknown")
-    ordered = sorted(labels)
-    return {name: idx for idx, name in enumerate(ordered)}
-
-
-def append_csv(path: Path, row: Dict):
-    exists = path.exists()
-    with open(path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-        if not exists:
-            writer.writeheader()
-        writer.writerow(row)
-
-
-def evaluate(model, loader, device, phase_loss_fn, action_loss_fn, amp_enabled):
-    model.eval()
+    Returns:
+        {
+            "mse_loss": float,
+            "mean_dist": float,  - -klid mesafesi (sadece click örnekleri)
+            "click_ratio": float - batch'lerdeki click oranı
+        }
+    """
+    model.train()
     loss_sum = 0.0
-    phase_acc_sum = 0.0
-    action_acc_sum = 0.0
-    n = 0
-    with torch.no_grad():
-        for images, phase_t, action_t in loader:
-            images = images.to(device, non_blocking=True)
-            phase_t = phase_t.to(device, non_blocking=True)
-            action_t = action_t.to(device, non_blocking=True)
+    dist_sum = 0.0
+    click_count = 0
+    total_count = 0
 
-            with torch.amp.autocast("cuda", enabled=amp_enabled):
-                phase_logits, action_logits = model(images)
-                p_loss = phase_loss_fn(phase_logits, phase_t)
-                a_loss = action_loss_fn(action_logits, action_t)
-                loss = p_loss + a_loss
+    for batch in loader:
+        stacked, coords_gt, click_mask = prepare_batch(batch, device)
+        bs = stacked.size(0)
 
-            bs = images.size(0)
-            n += bs
-            loss_sum += float(loss.item()) * bs
-            phase_acc_sum += accuracy(phase_logits, phase_t, ignore_index=-100) * bs
-            action_acc_sum += accuracy(action_logits, action_t, ignore_index=-100) * bs
+        optimizer.zero_grad(set_to_none=True)
 
+        with torch.amp.autocast("cuda", enabled=amp_enabled):
+            pred_coords = model(stacked)  # (B, 2)
+
+            # Loss: sadece mouse_click örnekleri üzerinden
+            if click_mask.any():
+                loss = loss_fn(pred_coords[click_mask], coords_gt[click_mask])
+            else:
+                # Batch'te hiç click yoksa -> küçük dummy loss (gradient akisi korunsun)
+                loss = loss_fn(pred_coords[:1], pred_coords[:1].detach()) * 0.0
+
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+
+        # Metrik biriktir
+        n_clicks = int(click_mask.sum().item())
+        total_count += bs
+        click_count += n_clicks
+
+        if click_mask.any():
+            loss_sum += float(loss.item()) * n_clicks
+            with torch.no_grad():
+                dist_sum += compute_mean_euclidean_distance(
+                    pred_coords, coords_gt, click_mask
+                ) * n_clicks
+
+    safe_clicks = max(1, click_count)
     return {
-        "loss": loss_sum / max(1, n),
-        "phase_acc": phase_acc_sum / max(1, n),
-        "action_acc": action_acc_sum / max(1, n),
+        "mse_loss": loss_sum / safe_clicks,
+        "mean_dist": dist_sum / safe_clicks,
+        "click_ratio": click_count / max(1, total_count),
     }
 
 
+# ......................................................................
+#  VALİDASYON
+# ......................................................................
+
+@torch.no_grad()
+def evaluate(
+    model: nn.Module,
+    loader,
+    loss_fn: nn.Module,
+    device: torch.device,
+    amp_enabled: bool,
+) -> Dict[str, float]:
+    """
+    Validasyon/test degerlendirmesi.
+
+    Returns:
+        {
+            "mse_loss": float,
+            "mean_dist": float,
+            "click_ratio": float,
+        }
+    """
+    model.eval()
+    loss_sum = 0.0
+    dist_sum = 0.0
+    click_count = 0
+    total_count = 0
+
+    for batch in loader:
+        stacked, coords_gt, click_mask = prepare_batch(batch, device)
+        bs = stacked.size(0)
+
+        with torch.amp.autocast("cuda", enabled=amp_enabled):
+            pred_coords = model(stacked)
+
+            if click_mask.any():
+                loss = loss_fn(pred_coords[click_mask], coords_gt[click_mask])
+            else:
+                loss = torch.tensor(0.0, device=device)
+
+        n_clicks = int(click_mask.sum().item())
+        total_count += bs
+        click_count += n_clicks
+
+        if click_mask.any():
+            loss_sum += float(loss.item()) * n_clicks
+            dist_sum += compute_mean_euclidean_distance(
+                pred_coords, coords_gt, click_mask
+            ) * n_clicks
+
+    safe_clicks = max(1, click_count)
+    return {
+        "mse_loss": loss_sum / safe_clicks,
+        "mean_dist": dist_sum / safe_clicks,
+        "click_ratio": click_count / max(1, total_count),
+    }
+
+
+# ......................................................................
+#  ANA EĞİTİM FONKSİYONU
+# ......................................................................
+
 def main():
-    parser = argparse.ArgumentParser(description="LoABot Agentic Trainer")
-    parser.add_argument(
-        "--train-manifest",
-        default=r"E:\LoABot_Training_Data\datasets\vision\vision_train.jsonl",
+    parser = argparse.ArgumentParser(
+        description="LoABot v5.9 Agentic Trainer - Temporal Video Pipeline"
     )
+# ----------------------------------------------------------------------
     parser.add_argument(
-        "--test-manifest",
-        default=r"E:\LoABot_Training_Data\datasets\vision\vision_test.jsonl",
-    )
-    parser.add_argument(
-        "--action-log-root",
-        default=r"E:\LoABot_Training_Data\AGENTIC_LOGS",
-        help="Eger varsa gercek action loglari buradan alinip action etiketleri zenginlestirilir.",
+        "--video-root",
+        default=r"D:\LoABot_Training_Data\videos",
+        help="VID_* oturum klasörlerinin kök dizini.",
     )
     parser.add_argument(
         "--log-root",
-        default=r"E:\LoABot_Training_Data\runtime_data\training_logs",
+        default=r"D:\LoABot_Training_Data\runtime_data\training_logs",
+        help="Egitim çıktı dizini (checkpoint, log, TB).",
     )
-    parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--weight-decay", type=float, default=1e-4)
-    parser.add_argument("--image-size", type=int, default=224)
-    parser.add_argument("--backbone", default="resnet18", choices=["resnet18", "efficientnet_b0", "tiny"])
-    parser.add_argument("--batch-size", type=int, default=0, help="0 ise otomatik secilir")
-    parser.add_argument("--num-workers", type=int, default=-1, help="-1 ise otomatik secilir")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--action-loss-weight", type=float, default=0.8)
-    parser.add_argument("--action-window-sec", type=float, default=0.75)
+    parser.add_argument("--train-ratio", type=float, default=0.8)
+# ----------------------------------------------------------------------
+    parser.add_argument(
+        "--backbone",
+        default="resnet18",
+        choices=["resnet18", "efficientnet_b0", "tiny"],
+    )
     parser.add_argument("--no-pretrained", action="store_true")
+    parser.add_argument("--dropout", type=float, default=0.3)
+# ----------------------------------------------------------------------
+    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument(
-        "--with-click-head",
-        action="store_true",
-        help="Koordinat regresyon kafasini etkinlestir (click_knowledge.json gerektirir).",
+        "--loss-fn", default="mse", choices=["mse", "l1", "smooth_l1"],
+        help="Koordinat regresyon loss fonksiyonu.",
     )
     parser.add_argument(
-        "--click-loss-weight",
-        type=float,
-        default=0.3,
-        help="Koordinat kayip agirligi (varsayilan 0.3).",
+        "--image-size", type=int, default=224,
+        help="Frame resize boyutu (H=W kare).",
     )
-    parser.add_argument("--early-stop-patience", type=int, default=6)
-    parser.add_argument("--early-stop-min-delta", type=float, default=1e-4)
+    parser.add_argument(
+        "--batch-size", type=int, default=0,
+        help="0 -> otomatik (VRAM'e göre).",
+    )
+    parser.add_argument(
+        "--num-workers", type=int, default=-1,
+        help="-1 -> otomatik (CPU cekirdegine göre).",
+    )
+    parser.add_argument("--seed", type=int, default=42)
+# ----------------------------------------------------------------------
+    parser.add_argument("--early-stop-patience", type=int, default=8)
+    parser.add_argument("--early-stop-min-delta", type=float, default=1e-5)
     parser.add_argument("--disable-early-stop", action="store_true")
+# ----------------------------------------------------------------------
     parser.add_argument("--no-tensorboard", action="store_true")
+
     args = parser.parse_args()
+# ----------------------------------------------------------------------
+    #  SETUP
+# ----------------------------------------------------------------------
 
     seed_everything(args.seed)
     torch.backends.cudnn.benchmark = True
 
-    # --- CUDA Tanilama ---
+    # CUDA tanılama
     cuda_ok = torch.cuda.is_available()
     print(f"PyTorch: {torch.__version__} | CUDA runtime: {torch.version.cuda} | CUDA available: {cuda_ok}")
     if cuda_ok:
         _dev0 = torch.cuda.get_device_properties(0)
         print(f"GPU: {_dev0.name} | VRAM: {_dev0.total_memory / 1024**3:.1f} GB")
     else:
-        print("UYARI: CUDA bulunamadi — egitim CPU uzerinde calisacak (cok yavas).")
+        print("UYARI: CUDA bulunamadi - egitim CPU uzerinde calisacak (cok yavas).")
         print("  Cozum: pip install torch torchvision --extra-index-url https://download.pytorch.org/whl/cu124")
 
-    train_manifest = Path(args.train_manifest)
-    test_manifest = Path(args.test_manifest)
-    if not train_manifest.exists() or not test_manifest.exists():
-        raise SystemExit("Manifest bulunamadi. Once dataset_builder.py calistirin.")
+    device = torch.device("cuda" if cuda_ok else "cpu")
 
-    rows_train = read_jsonl(train_manifest)
-    rows_test = read_jsonl(test_manifest)
-    if not rows_train or not rows_test:
-        raise SystemExit("Train/Test manifest bos.")
-
-    action_times, action_labels = load_action_events(Path(args.action_log_root))
-
-    # Action label enrich (manifestte yoksa stage/nearest event'ten doldur)
-    for r in rows_train + rows_test:
-        if not r.get("action_label"):
-            img_ts = parse_image_ts_from_name(r.get("image_path", ""))
-            inferred = nearest_action_label(
-                image_ts=img_ts,
-                action_times=action_times,
-                action_labels=action_labels,
-                window_sec=args.action_window_sec,
-            )
-            if not inferred:
-                inferred = infer_action_label_from_stage(r.get("stage", ""), r.get("phase_label", ""))
-            r["action_label"] = inferred
-
-    phase_id_to_name = {}
-    for r in rows_train + rows_test:
-        pid = int(r.get("phase_id", -1))
-        if pid >= 0:
-            phase_id_to_name[pid] = str(r.get("phase_label", f"phase_{pid}"))
-
-    action_to_id = ensure_action_vocab(rows_train, rows_test)
-    for r in rows_train + rows_test:
-        r["action_id"] = int(action_to_id.get(str(r.get("action_label", "unknown")), action_to_id["unknown"]))
-
-    num_phases = max(phase_id_to_name.keys()) + 1
-    num_actions = len(action_to_id)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+    # Worker ve batch boyutu
     if args.num_workers < 0:
         num_workers = auto_num_workers()
     else:
@@ -551,124 +549,137 @@ def main():
     else:
         batch_size = int(args.batch_size)
 
-    # CPU korumasi: elle girilen degerler CPU icin fazla agir olabilir.
+    # CPU koruması
     if device.type != "cuda":
-        _cpu_max_batch = 32
+        _cpu_max_batch = 8
         if batch_size > _cpu_max_batch:
-            print(f"UYARI: CPU modunda batch_size={batch_size} cok yuksek; {_cpu_max_batch} olarak dusuruldu.")
+            print(f"UYARI: CPU modunda batch_size={batch_size} -> {_cpu_max_batch} olarak dusuruldu.")
             batch_size = _cpu_max_batch
         _cpu_max_workers = max(2, (os.cpu_count() or 4) // 2)
         if num_workers > _cpu_max_workers:
-            print(f"UYARI: CPU modunda num_workers={num_workers} azaltildi; {_cpu_max_workers} olarak ayarlandi.")
+            print(f"UYARI: CPU modunda num_workers -> {_cpu_max_workers} olarak ayarlandi.")
             num_workers = _cpu_max_workers
+# ----------------------------------------------------------------------
+    #  DATA LOADER (video_dataset_builder entegrasyonu)
+# ----------------------------------------------------------------------
 
-    train_ds = AgenticManifestDataset(
-        rows=rows_train,
-        image_size=args.image_size,
-        train=True,
-        action_to_id=action_to_id,
-        action_times=action_times,
-        action_labels=action_labels,
-        action_window_sec=args.action_window_sec,
-    )
-    test_ds = AgenticManifestDataset(
-        rows=rows_test,
-        image_size=args.image_size,
-        train=False,
-        action_to_id=action_to_id,
-        action_times=action_times,
-        action_labels=action_labels,
-        action_window_sec=args.action_window_sec,
-    )
+    image_size = int(args.image_size)
+    resize = (image_size, image_size)
 
-    train_loader = DataLoader(
-        train_ds,
+    print(f"\nDataset taranıyor: {args.video_root}")
+    print(f"  resize={resize} | batch_size={batch_size} | num_workers={num_workers}")
+
+    train_loader, test_loader = build_dataloaders(
+        video_root=args.video_root,
+        train_ratio=args.train_ratio,
         batch_size=batch_size,
-        shuffle=True,
         num_workers=num_workers,
-        pin_memory=(device.type == "cuda"),
-        persistent_workers=(num_workers > 0),
-        prefetch_factor=4 if num_workers > 0 else None,
-    )
-    test_loader = DataLoader(
-        test_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=(device.type == "cuda"),
-        persistent_workers=(num_workers > 0),
-        prefetch_factor=4 if num_workers > 0 else None,
+        resize=resize,
+        seed=args.seed,
+        max_open_readers=max(1, min(2, num_workers if num_workers > 0 else 1)),
     )
 
-    model = AgenticNet(
-        num_phases=num_phases,
-        num_actions=num_actions,
+    # Bos dataset kontrolü
+    train_len = len(train_loader.dataset)
+    test_len = len(test_loader.dataset)
+    if train_len == 0:
+        raise SystemExit("HATA: Train dataset bos. Video dosyalarini kontrol edin.")
+    print(f"  Train: {train_len} örnek | Test: {test_len} örnek\n")
+# ----------------------------------------------------------------------
+    #  MODEL
+# ----------------------------------------------------------------------
+
+    model = TemporalAgenticNet(
         backbone=args.backbone,
         pretrained=(not args.no_pretrained),
-        with_click_head=args.with_click_head,
+        dropout=args.dropout,
     ).to(device)
 
-    phase_weights = build_weights(rows_train, key="phase_id", n_classes=num_phases).to(device)
-    action_weights = build_weights(rows_train, key="action_id", n_classes=num_actions).to(device)
+    # Parametre sayısı
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Model: TemporalAgenticNet ({args.backbone})")
+    print(f"  Toplam parametre : {total_params:,}")
+    print(f"  Egitilebilir     : {trainable_params:,}")
+# ----------------------------------------------------------------------
+    #  LOSS & OPTİMİZER
+# ----------------------------------------------------------------------
 
-    phase_loss_fn = nn.CrossEntropyLoss(weight=phase_weights)
-    action_loss_fn = nn.CrossEntropyLoss(weight=action_weights, ignore_index=-100)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, args.epochs))
+    # Loss fonksiyonu seçimi
+    loss_name = str(args.loss_fn).lower()
+    if loss_name == "l1":
+        loss_fn = nn.L1Loss()
+    elif loss_name == "smooth_l1":
+        loss_fn = nn.SmoothL1Loss()
+    else:
+        loss_fn = nn.MSELoss()
+    print(f"  Loss fonksiyonu  : {loss_fn.__class__.__name__}")
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=max(1, args.epochs),
+    )
     scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
+    amp_enabled = device.type == "cuda"
+# ----------------------------------------------------------------------
+    #  ?IKTI DİZİNİ
+# ----------------------------------------------------------------------
 
     run_root = Path(args.log_root)
     run_dir = run_root / datetime.now().strftime("run_%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    (run_dir / "phase_id_to_name.json").write_text(
-        json.dumps({str(k): v for k, v in sorted(phase_id_to_name.items())}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    (run_dir / "action_to_id.json").write_text(
-        json.dumps(action_to_id, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    # Egitim konfigürasyonu kaydet
+    train_config = {
+        "video_root": str(args.video_root),
+        "device": str(device),
+        "device_name": torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu",
+        "epochs": args.epochs,
+        "backbone": args.backbone,
+        "pretrained": not args.no_pretrained,
+        "dropout": args.dropout,
+        "loss_fn": loss_fn.__class__.__name__,
+        "batch_size": batch_size,
+        "num_workers": num_workers,
+        "image_size": image_size,
+        "lr": args.lr,
+        "weight_decay": args.weight_decay,
+        "train_ratio": args.train_ratio,
+        "early_stop_patience": args.early_stop_patience,
+        "early_stop_min_delta": args.early_stop_min_delta,
+        "early_stop_enabled": not args.disable_early_stop,
+        "tensorboard_enabled": not args.no_tensorboard,
+        "train_samples": train_len,
+        "test_samples": test_len,
+        "total_params": total_params,
+        "trainable_params": trainable_params,
+        "input_channels": 9,
+        "architecture": "stacked_2d_cnn_temporal",
+    }
     (run_dir / "train_config.json").write_text(
-        json.dumps(
-            {
-                "train_manifest": str(train_manifest),
-                "test_manifest": str(test_manifest),
-                "action_log_root": str(args.action_log_root),
-                "device": str(device),
-                "device_name": torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu",
-                "epochs": args.epochs,
-                "backbone": args.backbone,
-                "batch_size": batch_size,
-                "num_workers": num_workers,
-                "image_size": args.image_size,
-                "lr": args.lr,
-                "weight_decay": args.weight_decay,
-                "action_loss_weight": args.action_loss_weight,
-                "early_stop_patience": args.early_stop_patience,
-                "early_stop_min_delta": args.early_stop_min_delta,
-                "early_stop_enabled": not args.disable_early_stop,
-                "tensorboard_enabled": not args.no_tensorboard,
-                "num_phases": num_phases,
-                "num_actions": num_actions,
-                "train_samples": len(rows_train),
-                "test_samples": len(rows_test),
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
+        json.dumps(train_config, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
     csv_path = run_dir / "metrics.csv"
+
+    # TensorBoard
     tb_dir = run_dir / "tensorboard"
     tb_writer = None
     if not args.no_tensorboard:
         tb_writer, tb_ok = create_summary_writer(tb_dir)
         if not tb_ok:
-            print("UYARI: TensorBoard import edilemedi, --no-tensorboard gibi davranilacak.")
+            print("UYARI: TensorBoard import edilemedi.")
+# ----------------------------------------------------------------------
+    #  EARLY STOPPING STATE
+# ----------------------------------------------------------------------
 
-    best_metric = -1.0
+    best_metric = float("inf")   # loss minimize edilir -> küçük = iyi
     best_epoch = 0
     early_stopped = False
     stopped_epoch = args.epochs
@@ -676,141 +687,119 @@ def main():
     patience = max(1, int(args.early_stop_patience))
     min_delta = max(0.0, float(args.early_stop_min_delta))
     no_improve_epochs = 0
-    amp_enabled = device.type == "cuda"
 
-    print(f"Device: {device} | batch_size={batch_size} | num_workers={num_workers}")
-    if device.type == "cuda":
-        print(f"GPU: {torch.cuda.get_device_name(device)}")
+    print(f"\nDevice: {device} | batch_size={batch_size} | num_workers={num_workers}")
+    print(f"Epochs: {args.epochs} | LR: {args.lr} | Early stop: {early_stop_enabled} (patience={patience})")
+    print(f"Run dir: {run_dir}\n")
+    print("=" * 100)
+# ----------------------------------------------------------------------
+    #  EĞİTİM D-NGoSo
+# ----------------------------------------------------------------------
 
     for epoch in range(1, args.epochs + 1):
-        model.train()
         t0 = time.time()
-        train_loss = 0.0
-        train_phase_acc = 0.0
-        train_action_acc = 0.0
-        n = 0
-
-        for images, phase_t, action_t in train_loader:
-            images = images.to(device, non_blocking=True)
-            phase_t = phase_t.to(device, non_blocking=True)
-            action_t = action_t.to(device, non_blocking=True)
-
-            optimizer.zero_grad(set_to_none=True)
-            with torch.amp.autocast("cuda", enabled=amp_enabled):
-                out = model(images)
-                if args.with_click_head:
-                    phase_logits, action_logits, click_coords = out
-                else:
-                    phase_logits, action_logits = out
-                p_loss = phase_loss_fn(phase_logits, phase_t)
-                a_loss = action_loss_fn(action_logits, action_t)
-                loss = p_loss + (args.action_loss_weight * a_loss)
-                # Koordinat kaybı: sadece mouse_click örüntülerinde hesapla
-                if args.with_click_head and "click_coords_t" in dir():
-                    mask = (action_t == action_to_id.get("mouse_click", -1))
-                    if mask.any():
-                        c_loss = nn.functional.mse_loss(
-                            click_coords[mask], click_coords_t[mask]
-                        )
-                        loss = loss + (args.click_loss_weight * c_loss)
-
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-
-            bs = images.size(0)
-            n += bs
-            train_loss += float(loss.item()) * bs
-            train_phase_acc += accuracy(phase_logits, phase_t, ignore_index=-100) * bs
-            train_action_acc += accuracy(action_logits, action_t, ignore_index=-100) * bs
-
-        scheduler.step()
-
-        train_metrics = {
-            "loss": train_loss / max(1, n),
-            "phase_acc": train_phase_acc / max(1, n),
-            "action_acc": train_action_acc / max(1, n),
-        }
-        val_metrics = evaluate(
+# ----------------------------------------------------------------------
+        train_metrics = train_one_epoch(
             model=model,
-            loader=test_loader,
+            loader=train_loader,
+            optimizer=optimizer,
+            scaler=scaler,
+            loss_fn=loss_fn,
             device=device,
-            phase_loss_fn=phase_loss_fn,
-            action_loss_fn=action_loss_fn,
             amp_enabled=amp_enabled,
         )
 
-        composite = (val_metrics["phase_acc"] * 0.7) + (val_metrics["action_acc"] * 0.3)
-        epoch_time = time.time() - t0
+        scheduler.step()
+# ----------------------------------------------------------------------
+        val_metrics = evaluate(
+            model=model,
+            loader=test_loader,
+            loss_fn=loss_fn,
+            device=device,
+            amp_enabled=amp_enabled,
+        )
 
+        epoch_time = time.time() - t0
+# ----------------------------------------------------------------------
         row = {
             "epoch": epoch,
-            "lr": optimizer.param_groups[0]["lr"],
-            "train_loss": round(train_metrics["loss"], 6),
-            "train_phase_acc": round(train_metrics["phase_acc"], 6),
-            "train_action_acc": round(train_metrics["action_acc"], 6),
-            "val_loss": round(val_metrics["loss"], 6),
-            "val_phase_acc": round(val_metrics["phase_acc"], 6),
-            "val_action_acc": round(val_metrics["action_acc"], 6),
-            "composite": round(composite, 6),
-            "epoch_sec": round(epoch_time, 3),
+            "lr": round(optimizer.param_groups[0]["lr"], 8),
+            "train_mse_loss": round(train_metrics["mse_loss"], 6),
+            "train_mean_dist": round(train_metrics["mean_dist"], 6),
+            "train_click_ratio": round(train_metrics["click_ratio"], 4),
+            "val_mse_loss": round(val_metrics["mse_loss"], 6),
+            "val_mean_dist": round(val_metrics["mean_dist"], 6),
+            "val_click_ratio": round(val_metrics["click_ratio"], 4),
+            "epoch_sec": round(epoch_time, 2),
         }
         append_csv(csv_path, row)
-
+# ----------------------------------------------------------------------
         if tb_writer is not None:
-            tb_writer.add_scalar("Loss/train", train_metrics["loss"], epoch)
-            tb_writer.add_scalar("Loss/val", val_metrics["loss"], epoch)
-            tb_writer.add_scalar("Accuracy/train_phase", train_metrics["phase_acc"], epoch)
-            tb_writer.add_scalar("Accuracy/val_phase", val_metrics["phase_acc"], epoch)
-            tb_writer.add_scalar("Accuracy/train_action", train_metrics["action_acc"], epoch)
-            tb_writer.add_scalar("Accuracy/val_action", val_metrics["action_acc"], epoch)
-            tb_writer.add_scalar("Metric/composite_val", composite, epoch)
+            tb_writer.add_scalar("Loss/train_mse", train_metrics["mse_loss"], epoch)
+            tb_writer.add_scalar("Loss/val_mse", val_metrics["mse_loss"], epoch)
+            tb_writer.add_scalar("Distance/train_mean", train_metrics["mean_dist"], epoch)
+            tb_writer.add_scalar("Distance/val_mean", val_metrics["mean_dist"], epoch)
+            tb_writer.add_scalar("Data/train_click_ratio", train_metrics["click_ratio"], epoch)
+            tb_writer.add_scalar("Data/val_click_ratio", val_metrics["click_ratio"], epoch)
             tb_writer.add_scalar("LR/current", optimizer.param_groups[0]["lr"], epoch)
-            tb_writer.flush()  # Her epoch sonunda diske yaz; TensorBoard aninda guncellenir.
-
+            tb_writer.flush()
+# ----------------------------------------------------------------------
         ckpt = {
             "epoch": epoch,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
-            "phase_id_to_name": phase_id_to_name,
-            "action_to_id": action_to_id,
+            "backbone": args.backbone,
+            "input_channels": 9,
             "args": vars(args),
             "metrics": row,
         }
         torch.save(ckpt, run_dir / "last.pt")
-        improved = composite > (best_metric + min_delta)
+
+        # Best model: val_mse_loss minimize
+        val_loss = val_metrics["mse_loss"]
+        improved = val_loss < (best_metric - min_delta)
         if improved:
-            best_metric = composite
+            best_metric = val_loss
             best_epoch = epoch
             no_improve_epochs = 0
             torch.save(ckpt, run_dir / "best.pt")
+            marker = " * best"
         else:
             no_improve_epochs += 1
-
+            marker = ""
+# ----------------------------------------------------------------------
         print(
             f"[{epoch:03d}/{args.epochs}] "
-            f"train_loss={row['train_loss']:.4f} "
-            f"val_loss={row['val_loss']:.4f} "
-            f"val_phase_acc={row['val_phase_acc']:.4f} "
-            f"val_action_acc={row['val_action_acc']:.4f} "
+            f"train_loss={row['train_mse_loss']:.5f} "
+            f"val_loss={row['val_mse_loss']:.5f} "
+            f"val_dist={row['val_mean_dist']:.4f} "
+            f"click%={row['val_click_ratio']:.2f} "
+            f"lr={row['lr']:.2e} "
             f"time={row['epoch_sec']:.1f}s"
+            f"{marker}"
         )
-
+# ----------------------------------------------------------------------
         if early_stop_enabled and no_improve_epochs >= patience:
             early_stopped = True
             stopped_epoch = epoch
             print(
-                f"Early stopping tetiklendi: {no_improve_epochs} epoch boyunca iyilesme yok "
+                f"\nEarly stopping: {no_improve_epochs} epoch boyunca iyilesme yok "
                 f"(patience={patience}, min_delta={min_delta})."
             )
             break
+# ----------------------------------------------------------------------
+    #  SONU? -ZETİ
+# ----------------------------------------------------------------------
+
+    print("=" * 100)
 
     summary = {
-        "best_composite": best_metric,
+        "best_val_mse_loss": round(best_metric, 6),
         "best_epoch": best_epoch,
         "early_stopped": early_stopped,
         "stopped_epoch": stopped_epoch,
+        "total_epochs_run": min(stopped_epoch, args.epochs),
         "run_dir": str(run_dir),
         "best_ckpt": str(run_dir / "best.pt"),
         "last_ckpt": str(run_dir / "last.pt"),
@@ -818,13 +807,24 @@ def main():
         "tensorboard_enabled": tb_writer is not None,
         "tensorboard_dir": str(tb_dir) if tb_writer is not None else "",
     }
+
     if tb_writer is not None:
         tb_writer.flush()
         tb_writer.close()
-    (run_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    print("Egitim tamamlandi.")
+
+    (run_dir / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    print("\nEgitim tamamlandi.")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
     main()
+
+
+
+
+

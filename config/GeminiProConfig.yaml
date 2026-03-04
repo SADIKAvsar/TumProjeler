@@ -79,7 +79,7 @@ module_general:
     MAX_FREEZE_DURATION_SN: 60
     EVENT_MONITOR_SLEEP_SEC: 60
     EVENT_COMBAT_WAIT_SN: 60
-    SEQUENTIAL_MAX_RAM_FRAMES: 600
+    # SEQUENTIAL_MAX_RAM_FRAMES: 600  # video sistemiyle gereksiz
     LOCATION_SCAN_INTERVAL_SN: 30
     GAME_UI_READY_DELAY_SN: 20
     RESTART_AFTER_KILL_WAIT_SN: 1
@@ -110,23 +110,29 @@ module_general:
     HUMAN_LIKE_CLICK_ENABLED: false
     SEQ_HUMAN_CLICK_DURATION: 0.10
     SEQ_PERF_LOG_ENABLED: true
+    # ── Resim toplama (shadow mode) devre dışı — video sistemi aktif ──
     SHADOW_MODE_ENABLED: false
     SHADOW_DATA_ROOT: D:\\LoABot_Training_Data
     SHADOW_JPEG_QUALITY: 92
     SEQUENTIAL_RECORDER_ROOT: D:\\LoABot_Training_Data\\sequences
-    SHADOW_QUEUE_MAXSIZE: 256
-    SHADOW_WORKER_COUNT: 2
-    SHADOW_SAVE_MIN_INTERVAL_SN: 0.15
-    SHADOW_SAVE_ON_MISS: false
-    SHADOW_MISS_MIN_INTERVAL_SN: 2.0
-    SHADOW_SYSTEM_RUN_YOLO: false
-    SHADOW_SYSTEM_CAPTURE_INTERVAL_SN: 1.0
-    SHADOW_STARTUP_CAPTURE_ENABLED: false
-    SHADOW_STARTUP_WAIT_CAPTURE_SN: 20.0
-    SHADOW_BUFFER_RAM_GB: 32.0
-    MISSION_RECORDER_ENABLED: true
+    # SHADOW_QUEUE_MAXSIZE: 256          # video sistemiyle gereksiz
+    # SHADOW_WORKER_COUNT: 2             # video sistemiyle gereksiz
+    # SHADOW_SAVE_MIN_INTERVAL_SN: 0.15  # video sistemiyle gereksiz
+    # SHADOW_SAVE_ON_MISS: false         # video sistemiyle gereksiz
+    # SHADOW_MISS_MIN_INTERVAL_SN: 2.0   # video sistemiyle gereksiz
+    # SHADOW_SYSTEM_RUN_YOLO: false      # video sistemiyle gereksiz
+    # SHADOW_SYSTEM_CAPTURE_INTERVAL_SN: 1.0  # video sistemiyle gereksiz
+    # SHADOW_STARTUP_CAPTURE_ENABLED: false    # video sistemiyle gereksiz
+    # SHADOW_STARTUP_WAIT_CAPTURE_SN: 20.0    # video sistemiyle gereksiz
+    # SHADOW_BUFFER_RAM_GB: 32.0              # video sistemiyle gereksiz
+    MISSION_RECORDER_ENABLED: false
     MISSION_CAPTURE_FPS: 1.0
     MISSION_RUN_YOLO: false
+    # ── Video kayıt ayarları ──
+    VIDEO_RECORDER_ENABLED: true
+    VIDEO_RECORDER_ROOT: D:\\LoABot_Training_Data\\videos
+    VIDEO_RECORDER_FPS: 10
+    VIDEO_INPUT_COLOR_ORDER: BGR
     TRAINING_LOGGER_ENABLED: true
     TRAINING_LOGGER_ROOT: D:\\LoABot_Training_Data\\AGENTIC_LOGS
     TRAINING_LOGGER_QUEUE_MAXSIZE: 50000
@@ -135,7 +141,7 @@ module_general:
     LOCAL_AI_MEMORY_PATH: D:\\LoABot_Training_Data\\runtime_data\\ai_memory.json
     LOCAL_AI_HISTORY_PATH: D:\\LoABot_Training_Data\\runtime_data\\decision_history.jsonl
     OLLAMA_ENABLED: true
-    OLLAMA_MODEL: qwen3-vl:4b
+    OLLAMA_MODEL: qwen3-vl:8b
     OLLAMA_BASE_URL: http://localhost:11434
     OLLAMA_TIMEOUT_SEC: 20.0
     OLLAMA_MIN_CONFIDENCE: 0.50
@@ -143,12 +149,20 @@ module_general:
     OLLAMA_VISION_ENABLED: true
 
   recording:
+    # ── Eski resim-tabanlı kayıt (devre dışı — video sistemi yerine geçti) ──
     sequential:
-      enabled: true
+      enabled: false
       max_ram_frames: 150
       jpeg_quality: 85
       output_path: "D:/LoABot_Training_Data/Sequences"
       flush_on_success_only: true
+
+    # ── YENİ: Video tabanlı eğitim verisi kaydı ──
+    video:
+      enabled: true
+      output_path: "D:/LoABot_Training_Data/videos"
+      fps: 10
+      input_color_order: "BGR"
     
   ui_regions:
     region_full_screen: {x: 0, y: 0, w: 2560, h: 1440}
@@ -226,7 +240,6 @@ module_demon_boss:
   meta:
     aciklama: Demon Boss saldırı modülü için tüm veriler.
     
-  # --- DÜZELTME: Tüm 'region_key'ler 'region_full_screen' oldu ---
   coordinates:
     server_s575: {x: 1400, y: 680, anchor: {image_file: server_s575.png, region_key: region_giris, confidence: 0.8}}
     etkinlik_oku_open: {x: 2237, y: 98, anchor: {image_file: etkinlik_oku_open.png, region_key: region_ust_menu, confidence: 0.8}}

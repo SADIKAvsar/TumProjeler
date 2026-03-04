@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import subprocess
 import time
@@ -50,6 +51,11 @@ class GameManager:
                     proc.kill()
             except Exception:
                 continue
+
+        # YAMA-7: RL ödül sinyali — oyun yeniden başlatıldı (-0.5)
+        if hasattr(self.bot, "reward_engine"):
+            self.bot.reward_engine.on_restart(reason="game_terminate")
+
         time.sleep(2)
 
     def _capture_probe(self, region: dict):
@@ -133,19 +139,8 @@ class GameManager:
         return False
 
     def _capture_system_recovery_snapshot(self, stage: str, reason: str = "", min_interval_sn: float = 1.0):
-        now = time.monotonic()
-        if now - self._last_system_capture_time < max(0.0, float(min_interval_sn)):
-            return
-        self._last_system_capture_time = now
-
-        try:
-            self.bot.vision.save_system_shadow_frame(
-                stage=stage,
-                namespace="system_recovery",
-                reason=reason,
-            )
-        except Exception:
-            pass
+        """No-op: Shadow mode kaldırıldı. Video recorder otomatik olarak kaydeder."""
+        pass
 
     def _handle_freeze_with_ai(self) -> bool:
         """
@@ -244,6 +239,10 @@ class GameManager:
                     # --- EKLENEN KISIM 1: OYUN ÇÖKTÜĞÜNDE ---
                     self.bot.gui_queue.put(("status_line1", ("Oyun çöktü, yeniden başlatılıyor...", "red")))
                     self.bot.gui_queue.put(("status_line2", ("Lütfen bekleyin...", "gray")))
+
+                    # Reward Engine: Oyun çökmesi = negatif sinyal (-0.5)
+                    if hasattr(self.bot, "reward_engine"):
+                        self.bot.reward_engine.on_restart(reason="watchdog_process_crash")
                     
                     self.bot.restart_game()
                     self._freeze_count = 0
@@ -266,6 +265,10 @@ class GameManager:
                         # --- EKLENEN KISIM 2: OYUN DONDUĞUNDA ---
                         self.bot.gui_queue.put(("status_line1", ("Donma tespit edildi, başlatılıyor...", "red")))
                         self.bot.gui_queue.put(("status_line2", ("Lütfen bekleyin...", "gray")))
+
+                        # Reward Engine: Çözülemeyen freeze = negatif sinyal (-0.5)
+                        if hasattr(self.bot, "reward_engine"):
+                            self.bot.reward_engine.on_restart(reason="watchdog_freeze_unresolved")
                         
                         self.bot.restart_game()
                         self._freeze_count = 0

@@ -1,157 +1,85 @@
 # ============================================================================
-# LoA Bot AI Agent Configuration
+# LoA Bot AI Agent Configuration (Local-Only)
 # ============================================================================
-# Local-first modda cloud API kullanimi devre disidir.
-# Bu dosya Google Gemini Vision API tabanlı AI ajanı için ayarları içerir.
+# This file is local-first. Cloud Gemini settings were removed.
+# Runtime is expected to use local Ollama + local PyTorch stack.
 
 ai_settings:
-  # AI sistemini aktifleştir/devre dışı bırak
+  # Master toggle
   enabled: true
 
-  # AI başarısız olduğunda eski kural tabanlı sisteme geri dön
+  # If AI output is unusable, continue with rule-based logic
   fallback_to_rules: true
 
-  # Observer mode: AI çalışır ama bot kontrol etmez (test için)
+  # AI runs but does not control bot (test mode)
   observer_mode: false
 
-  # Google Gemini API Ayarları
-  gemini:
-    # API key'inizi buraya yapıştırın (GEMINI_API_SETUP.md'ye bakın)
-    api_key: "LOCAL_ONLY_UNUSED"
-
-    # Model seçimi (gemini-2.0-flash önerilir: hızlı ve ucuz)
-    model_name: "gemini-2.0-flash"
-
-    # AI yaratıcılığı (0.0-1.0, düşük = tutarlı kararlar)
-    temperature: 0.2
-
-    # Maksimum response uzunluğu (token)
+  # Local VLM backend (Ollama)
+  ollama:
+    enabled: true
+    endpoint: "http://localhost:11434"
+    model_name: "qwen2.5-vl"
+    temperature: 0.1
     max_tokens: 512
-
-    # Top-p sampling (0.0-1.0)
     top_p: 0.8
-
-    # Top-k sampling
     top_k: 40
+    timeout_seconds: 30
 
-  # API Kullanım Limitleri (maliyet kontrolü)
-  rate_limits:
-    # Dakika başına maksimum API çağrısı
-    calls_per_minute: 5
+  # Local runtime guards (non-billing, non-cloud)
+  runtime_limits:
+    calls_per_minute: 30
+    calls_per_hour: 1000
 
-    # Saat başına maksimum API çağrısı
-    calls_per_hour: 120
-
-    # Günlük maksimum maliyet ($)
-    daily_cost_limit_usd: 5.0
-
-    # Aylık maksimum maliyet ($)
-    monthly_cost_limit_usd: 50.0
-
-  # Cache Ayarları (aynı durumda aynı karar = API tasarrufu)
+  # Decision cache
   caching:
-    # Karar cache süresi (saniye)
     decision_ttl_seconds: 60
-
-    # Screenshot cache süresi (saniye)
     screenshot_ttl_seconds: 30
-
-    # Cache boyutu (entry sayısı)
     max_cache_size: 100
 
-  # AI Güven Eşikleri (0.0-1.0)
-  # AI'nın güveni bu değerlerin altındaysa kural tabanlı sisteme geçilir
+  # Confidence thresholds (0.0-1.0)
   confidence_thresholds:
-    # Boss seçimi için minimum güven
     boss_selection: 0.6
-
-    # Donma teşhisi için minimum güven
     freeze_diagnosis: 0.7
-
-    # Stratejik bekleme kararı için minimum güven
     strategic_wait: 0.5
-
-    # Event önceliği için minimum güven
     event_priority: 0.6
-
-    # Loot optimizasyonu için minimum güven
     loot_optimization: 0.5
 
-  # Özellik Anahtarları (hangi AI özellikleri aktif?)
+  # Feature switches
   features:
-    # AI tabanlı boss seçimi
     boss_selection: true
-
-    # AI tabanlı stratejik bekleme kararı
     strategic_wait: true
-
-    # AI tabanlı donma teşhisi
     freeze_diagnosis: true
-
-    # AI tabanlı event önceliklendirme (Phase 2)
     event_priority: false
-
-    # AI tabanlı loot optimizasyonu (Phase 3)
     loot_optimization: false
-
-    # AI tabanlı PvP threat detection (Phase 3)
     pvp_detection: false
 
-  # Screenshot Ayarları
+  # Screenshot preprocess for local VLM input
   screenshot:
-    # Screenshot kalitesi (1-100, düşük = küçük dosya = ucuz)
     quality: 50
-
-    # AI'ya gönderilmeden önce resize (pixel)
     resize_width: 1280
     resize_height: 720
-
-    # Screenshot formatı
     format: "JPEG"
 
-  # Hafıza ve Öğrenme
+  # Local memory and history
   memory:
-    # Hafıza dosyası yolu
-    file_path: "E:\\LoABot_Training_Data\\runtime_data\\ai_memory.json"
-
-    # Karar geçmişi dosyası
-    history_file: "E:\\LoABot_Training_Data\\runtime_data\\decision_history.jsonl"
-
-    # Hafızayı kaydetme sıklığı (saniye)
+    file_path: "D:\\LoABot_Training_Data\\runtime_data\\ai_memory.json"
+    history_file: "D:\\LoABot_Training_Data\\runtime_data\\decision_history.jsonl"
     save_interval_seconds: 300
-
-    # Hafıza backup yapma sıklığı (saat)
     backup_interval_hours: 24
-
-    # Backup dosyası sayısı (eski backuplar silinir)
     max_backups: 7
 
-  # Loglama
+  # Logging
   logging:
-    # AI kararlarını loglama seviyesi (DEBUG, INFO, WARNING, ERROR)
     level: "INFO"
-
-    # AI logları ayrı dosyaya yazsın mı?
     separate_file: true
-
-    # AI log dosyası yolu
-    file_path: "E:\\LoABot_Training_Data\\runtime_data\\logs\\ai_decisions.log"
-
-    # Prompts'ları loglasın mı? (debugging için)
+    file_path: "D:\\LoABot_Training_Data\\runtime_data\\logs\\ai_decisions.log"
     log_prompts: false
-
-    # API responses'ları loglasın mı? (debugging için)
     log_responses: false
 
-  # Performans Metrikleri
+  # Metrics
   metrics:
-    # Metrikleri kaydet
     enabled: true
-
-    # Metrik dosyası yolu
-    file_path: "E:\\LoABot_Training_Data\\runtime_data\\ai_metrics.json"
-
-    # Metrikleri kaydetme sıklığı (saniye)
+    file_path: "D:\\LoABot_Training_Data\\runtime_data\\ai_metrics.json"
     save_interval_seconds: 600
 
 # ============================================================================
@@ -166,25 +94,17 @@ prompts:
   unknown_state: "prompts/unknown_state_recovery.txt"
 
 # ============================================================================
-# Advanced Settings (Değiştirmeyin - uzman kullanıcılar için)
+# Advanced
 # ============================================================================
 advanced:
-  # API timeout (saniye)
   api_timeout_seconds: 30
 
-  # Retry stratejisi
   retry:
     max_attempts: 3
     backoff_factor: 2.0
     max_backoff_seconds: 60
 
-  # Image preprocessing
   preprocessing:
-    # Görüntüyü keskinleştir
     sharpen: false
-
-    # Kontrast artır
     enhance_contrast: false
-
-    # Gri tonlamaya çevir (renkli daha iyi)
     grayscale: false
