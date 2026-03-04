@@ -202,6 +202,12 @@ class PyTorchInferenceEngine:
         self._loaded: bool = False
         self._inference_lock = threading.Lock()
 
+        # -- Lightweight Stagnation Detector --
+        self.last_movement_time = time.time()
+        self.is_stagnant = False
+        self.stagnation_limit = 3.0  # seconds
+        self._prev_gray_frame: Optional[np.ndarray] = None
+
         # ── Ekran çözünürlüğü (koordinat dönüşümü) ───────────────
         self._screen_width: int = 2560
         self._screen_height: int = 1440
@@ -342,6 +348,25 @@ class PyTorchInferenceEngine:
             return
 
         try:
+            # -- Lightweight motion check (grayscale absdiff) --
+            gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+            now = time.time()
+            movement_detected = True
+
+            if self._prev_gray_frame is not None and self._prev_gray_frame.shape == gray.shape:
+                diff = cv2.absdiff(gray, self._prev_gray_frame)
+                changed_ratio = float(np.count_nonzero(diff > 10)) / float(diff.size)
+                if changed_ratio < 0.01:
+                    movement_detected = False
+
+            if movement_detected:
+                self.last_movement_time = now
+                self.is_stagnant = False
+            elif (now - self.last_movement_time) > self.stagnation_limit:
+                self.is_stagnant = True
+
+            self._prev_gray_frame = gray
+
             tensor = self._preprocess_single_frame(frame_bgr)
             with self._buffer_lock:
                 self._frame_buffer.append(tensor)
@@ -403,6 +428,25 @@ class PyTorchInferenceEngine:
             }
             veya None (model yüklü değil / buffer eksik / hata)
         """
+        if self.is_stagnant:
+            self._log(
+                "[PyTorch] Karakter haritada takildi. "
+                "Otomatik kurtarma (Re-Anchor) tetikleniyor...",
+                level="WARNING",
+            )
+            self.last_movement_time = time.time()
+            self.is_stagnant = False
+            return {
+                "action": "sequence",
+                "name": "re_anchor_with_z",
+                "sequence_steps": [
+                    {"action": "click", "label": "boss_list_ac"},
+                    {"action": "boss_secimi"},
+                    {"action": "key", "key": "z"},
+                ],
+                "stagnant_reflex": True,
+            }
+
         if not self._loaded or self._model is None:
             return None
 

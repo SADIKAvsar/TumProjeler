@@ -10,10 +10,8 @@ class BossManager:
         self.bot = bot
         self.bosslar = bot.bosslar
         self.settings = bot.settings
-
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    #  STATE RESET â€” State Lock Ã¶nleyici merkezi temizlik
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        self._last_nav_evasion_ts = 0.0
+        self._last_nav_attack_check_ts = 0.0
 
     def _reset_combat_state(self, reason: str = "cycle_end"):
         """
@@ -172,6 +170,63 @@ class BossManager:
         self.bot.log(f"{check_name}: bulunamadi", level="DEBUG")
         return not required
 
+    def _is_navigation_under_attack(self) -> bool:
+        """
+        NAV fazinda hasar orbundan saldiri algisi:
+        - PvP monitor acik olmasa da burada refleks amacli kullanilir.
+        """
+        cfg = getattr(self.bot, "pvp_config", {}) or {}
+        region = cfg.get("hp_orb_region")
+        image_name = cfg.get("hp_damaged_template")
+        if not isinstance(region, dict) or not image_name:
+            return False
+
+        confidence = float(cfg.get("hp_damage_confidence", 0.85))
+        try:
+            return bool(self.bot.vision.find(image_name, region, confidence))
+        except Exception:
+            return False
+
+    def _run_navigation_evasion_combo(self) -> None:
+        """
+        Yolda saldiri altinda kalinca kisa kacis kombosu:
+        Space -> q -> Space
+        """
+        self.bot.log(
+            "[NAV_EVASION] Saldiri algilandi, kacis kombosu uygulaniyor: Space -> q -> Space",
+            level="WARNING",
+        )
+        self.bot.automator.press_key("space", label="nav_evasion_space_1")
+        time.sleep(0.04)
+        self.bot.automator.press_key("q", label="nav_evasion_q")
+        time.sleep(0.04)
+        self.bot.automator.press_key("space", label="nav_evasion_space_2")
+
+    def _maybe_run_navigation_evasion(self) -> None:
+        """
+        NAV fazinda periyodik saldiri kontrolu + cooldown'lu kacis refleksi.
+        """
+        if not bool(self.settings.get("NAV_EVASION_ENABLED", True)):
+            return
+        if not self.bot.running.is_set() or self.bot.paused:
+            return
+
+        now = time.time()
+        check_interval = float(self.settings.get("NAV_EVASION_CHECK_INTERVAL_SN", 0.45))
+        if (now - self._last_nav_attack_check_ts) < max(0.05, check_interval):
+            return
+        self._last_nav_attack_check_ts = now
+
+        if not self._is_navigation_under_attack():
+            return
+
+        cooldown = float(self.settings.get("NAV_EVASION_COOLDOWN_SN", 1.6))
+        if (now - self._last_nav_evasion_ts) < max(0.2, cooldown):
+            return
+
+        self._last_nav_evasion_ts = now
+        self._run_navigation_evasion_combo()
+
     def _start_navigation(self, target, ui_protocol: str = None) -> bool:
         """
         Boss listesi ve hedef boss tiklamasini AI ui_protocol kararina gore baslatir.
@@ -317,13 +372,36 @@ class BossManager:
         # spawn_time'Ä± da otomatik olarak ileriye taÅŸÄ±r.
         self.bot.combat.recalculate_times(target, attack_start)
 
+        ai_engine = getattr(getattr(self.bot, "brain", None), "ai_engine", None)
+        memory = getattr(ai_engine, "memory", None)
+
         if kill_ok:
+            # GUI "Boss: X kill" degeri AIEngine -> MemoryManager metadata.total_bosses_killed
+            # alanindan okunuyor. update_boss_performance(success=True) bu sayaci artirir.
+            if memory is not None and hasattr(memory, "update_boss_performance"):
+                try:
+                    memory.update_boss_performance(
+                        boss_name=str(target.get("aciklama", "")),
+                        kill_time=float(round(kill_time, 2)),
+                        success=True,
+                    )
+                except Exception as exc:
+                    self.bot.log(f"[AI_MEMORY] boss_kill guncelleme hatasi: {exc}", level="WARNING")
             if hasattr(self.bot, "reward_engine"):
                 self.bot.reward_engine.on_boss_killed(
                     boss_name=str(target.get("aciklama", "")),
                     kill_time=round(kill_time, 2),
                 )
         else:
+            if memory is not None and hasattr(memory, "update_boss_performance"):
+                try:
+                    memory.update_boss_performance(
+                        boss_name=str(target.get("aciklama", "")),
+                        kill_time=float(round(kill_time, 2)),
+                        success=False,
+                    )
+                except Exception as exc:
+                    self.bot.log(f"[AI_MEMORY] boss_fail guncelleme hatasi: {exc}", level="WARNING")
             if hasattr(self.bot, "reward_engine"):
                 self.bot.reward_engine.on_death(boss_name=str(target.get("aciklama", "")))
         return bool(kill_ok)
@@ -389,6 +467,11 @@ class BossManager:
             now = time.time()
             if now >= window_close_ts:
                 break
+
+            # NAV fazinda (henuz boss saldirisi baslamadan) hasar algilanirsa
+            # yurugeyi bozmadan kisa kacis kombosu uygula.
+            if not attack_done:
+                self._maybe_run_navigation_evasion()
 
             # 1. AREA 
             # T-PRE'dan itibaren taranÄ±r; bir kez bulununca tekrar aranmaz.
@@ -780,4 +863,3 @@ class BossManager:
 
         # Hizli zincir yoksa / bittiyse normal strateji
         self.bot.combat.check_strategic_wait(current_target)
-
