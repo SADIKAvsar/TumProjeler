@@ -78,6 +78,17 @@ Uygulama noktasi:
 - Pulse cagrisi su kosula alindi:
   - `if not area_found and not attack_done and now < spawn_ts:`
 
+## 3.5 Same-Layer 90sn Hard Guard + Return Source Logs
+`combat_manager.py/check_strategic_wait` guclendirildi:
+
+- Ayni katmanda bir sonraki boss `ready` penceresinde 90sn icindeyse
+  bot **asla** `EXP_FARM`'a donmez.
+- Bu kural AI kararinin da ustundedir (`rule_same_layer_fast90`).
+- `EXP_FARM` donuslerinde kaynagi netlemek icin debug log eklendi:
+  - `[RETURN_SOURCE] ... source=ai`
+  - `[RETURN_SOURCE] ... source=rule`
+  - `[RETURN_SOURCE] ... source=no_upcoming_boss`
+
 ---
 
 ## 4) Egitim Durumu
@@ -101,6 +112,22 @@ Hedef:
 3. Kritik kararlar loglanir ve geri izlenebilir olur.  
 4. Yeni ajan degisiklikten once bu dosyayi okur.  
 5. Bulut LLM'e geri donus yapilmaz.
+
+## 6) Gelistirici Operasyon Notu
+
+Commit/push otomasyonu eklendi:
+
+- `git_autosync.ps1`
+- `git_autosync.bat`
+
+Kullanim:
+
+- Otomatik mesaj + push:
+  - `.\git_autosync.bat`
+- Ozel mesaj + push:
+  - `.\git_autosync.bat -Message "fix: strategic wait guard"`
+- Sadece commit (push yok):
+  - `.\git_autosync.bat -NoPush`
 
 ---
 
