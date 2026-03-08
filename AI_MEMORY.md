@@ -89,6 +89,22 @@ Uygulama noktasi:
   - `[RETURN_SOURCE] ... source=rule`
   - `[RETURN_SOURCE] ... source=no_upcoming_boss`
 
+## 3.6 Boss Kill GUI Counter Sync
+`boss_manager.py/execute_precise_boss_flow` icinde kill/fail sonrasina
+`memory.update_boss_performance(...)` entegrasyonu eklendi.
+
+- Kill oldugunda `success=True`
+- Fail oldugunda `success=False`
+- GUI'deki `Boss: X kill` sayaç verisi MemoryManager metadata ile senkron kalir.
+
+## 3.7 Popup RLock Uyum Duzeltmesi
+`popup_manager.py` icinde `_thread.RLock.locked()` kaynakli crash giderildi.
+
+- `monitor_thread` artik `_is_action_lock_busy()` kullanir.
+- Yardimci metod, varsa `bot.is_action_lock_busy()` kullanir;
+  yoksa lock objesinde `locked()` fonksiyonunu guvenli fallback ile dener.
+  Boylece Python surum/lock tipi farklarinda thread kirilmaz.
+
 ---
 
 ## 4) Egitim Durumu
@@ -97,6 +113,7 @@ Uygulama noktasi:
 
 - `--weights` argumani eklendi.
 - Checkpoint varsa `model_state_dict` yukleniyor.
+- Varsayilan log yolu `D:\\LoABot_Training_Data\\runtime_data\\training_logs` olarak guncellendi.
 
 Hedef:
 - Catastrophic Forgetting riskini dusurmek

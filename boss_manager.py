@@ -1,5 +1,7 @@
 import time
 
+import cv2
+import numpy as np
 
 import os
 
@@ -9,6 +11,9 @@ class BossManager:
         self.bot = bot
         self.bosslar = bot.bosslar
         self.settings = bot.settings
+        self._last_nav_evasion_ts = 0.0
+        self._last_nav_motion_ts = time.time()
+        self._last_nav_reanchor_ts = 0.0
 
     # ═══════════════════════════════════════════════════════════════════
     #  STATE RESET — State Lock önleyici merkezi temizlik
@@ -171,6 +176,155 @@ class BossManager:
         self.bot.log(f"{check_name}: bulunamadi", level="DEBUG")
         return not required
 
+    def _run_navigation_evasion_combo(self) -> None:
+        """
+        Navigasyonda pusu/stagger durumunda kisa kacis refleksi.
+        """
+        self.bot.log(
+            "[NAV_EVASION] Dusuk hareket algisi, kacis kombosu: Space -> q -> Space",
+            level="WARNING",
+        )
+        self.bot.automator.press_key("space", label="nav_evasion_space_1")
+        time.sleep(0.04)
+        self.bot.automator.press_key("q", label="nav_evasion_q")
+        time.sleep(0.04)
+        self.bot.automator.press_key("space", label="nav_evasion_space_2")
+
+    def _capture_navigation_gray(self) -> np.ndarray | None:
+        """
+        Nabiz kontrolu icin ekrani kucultulmus gri forma cevirir.
+        Merkez bolge maskelenerek karakter idle animasyonlarinin etkisi azaltilir.
+        """
+        try:
+            frame = self.bot.vision.capture_full_screen()
+            if frame is None:
+                return None
+
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray = cv2.resize(gray, (320, 180), interpolation=cv2.INTER_AREA)
+
+            h, w = gray.shape
+            x1, x2 = int(w * 0.35), int(w * 0.65)
+            y1, y2 = int(h * 0.30), int(h * 0.78)
+            gray[y1:y2, x1:x2] = 0
+            return gray
+        except Exception:
+            return None
+
+    def _run_navigation_reanchor_combo(self, target) -> None:
+        self.bot.log("[NAV_PULSE] Takilma suruyor, Re-Anchor tetikleniyor.", level="WARNING")
+        self._re_anchor(target)
+        self.bot.automator.press_key("z", label="nav_pulse_reanchor_z")
+
+    def _probe_area_during_navigation(
+        self,
+        target: dict,
+        area_image: str,
+        area_conf: float,
+        region: dict,
+    ) -> bool:
+        """
+        Pulse kontrolu icinde area tespiti yapar.
+        Area bulunduysa hedefe varildi kabul edilir ve pulse aksiyonlari durur.
+        """
+        if not area_image or area_image == "default.png":
+            return False
+        if bool(target.get("_area_check_ok")):
+            return True
+
+        try:
+            matched = self.bot.vision.find(
+                area_image,
+                region,
+                float(area_conf),
+                target_data=target,
+                stage="area_check",
+            )
+        except Exception:
+            matched = False
+
+        if matched:
+            target["_area_check_ok"] = True
+            self._last_nav_motion_ts = time.time()
+            self.bot.log(f"[NAV_PULSE] AREA tespit edildi: {area_image}", level="DEBUG")
+            self.bot._seal_visual_event(
+                "area_check",
+                extra={
+                    "boss_id": str(target.get("aciklama", "")),
+                    "image": area_image,
+                    "source": "navigation_pulse",
+                },
+            )
+            return True
+
+        return False
+
+    def _check_navigation_pulse(
+        self,
+        target: dict,
+        area_image: str = "",
+        area_conf: float = 0.70,
+        region: dict | None = None,
+    ) -> bool:
+        """
+        1 saniyelik nabiz kontrolu:
+        - Hareket var mi? (2 gri kare farki)
+        - Pulse icinde area'ya ulasildi mi?
+        - Hareket yoksa once evasion, devam ederse re-anchor.
+        """
+        if not self.bot.running.is_set() or self.bot.paused:
+            return False
+
+        region = region or self.bot.ui_regions.get(
+            "region_full_screen", {"x": 0, "y": 0, "w": 2560, "h": 1440}
+        )
+
+        if self._probe_area_during_navigation(target, area_image, area_conf, region):
+            return True
+
+        first = self._capture_navigation_gray()
+        if first is None:
+            return True
+
+        if not self.bot._interruptible_wait(1.0):
+            return False
+
+        if self._probe_area_during_navigation(target, area_image, area_conf, region):
+            return True
+
+        second = self._capture_navigation_gray()
+        if second is None:
+            return True
+
+        diff = cv2.absdiff(first, second)
+        changed_ratio = float(np.count_nonzero(diff > 14)) / float(diff.size)
+        move_ratio_threshold = float(self.settings.get("NAV_PULSE_MOVE_RATIO_THRESHOLD", 0.015))
+        now = time.time()
+
+        if changed_ratio >= move_ratio_threshold:
+            self._last_nav_motion_ts = now
+            return True
+
+        self.bot.log(
+            f"[NAV_PULSE] Dusuk hareket: ratio={changed_ratio:.4f} (<{move_ratio_threshold:.4f})",
+            level="DEBUG",
+        )
+
+        evasion_cd = float(self.settings.get("NAV_EVASION_COOLDOWN_SN", 1.0))
+        if (now - self._last_nav_evasion_ts) >= max(0.2, evasion_cd):
+            self._last_nav_evasion_ts = now
+            self._run_navigation_evasion_combo()
+
+        reanchor_after = float(self.settings.get("NAV_PULSE_REANCHOR_AFTER_SN", 3.0))
+        reanchor_cd = float(self.settings.get("NAV_PULSE_REANCHOR_COOLDOWN_SN", 2.0))
+        if (now - self._last_nav_motion_ts) >= max(1.0, reanchor_after):
+            if (now - self._last_nav_reanchor_ts) >= max(0.5, reanchor_cd):
+                self._last_nav_reanchor_ts = now
+                self._run_navigation_reanchor_combo(target)
+                self._last_nav_motion_ts = time.time()
+
+        return True
+
     def _start_navigation(self, target, ui_protocol: str = None) -> bool:
         """
         Boss listesi ve hedef boss tiklamasini AI ui_protocol kararina gore baslatir.
@@ -271,6 +425,9 @@ class BossManager:
         )
         # ★ Staleness guard: phase başlangıç zamanını kaydet
         self.bot._global_phase_ts = time.time()
+        self._last_nav_motion_ts = time.time()
+        self._last_nav_evasion_ts = 0.0
+        self._last_nav_reanchor_ts = 0.0
 
         nav_ok = self._start_navigation(target, ui_protocol=protocol_name)
         self.bot.log(f"Navigasyon fazi sonucu: boss={target.get('aciklama')} success={nav_ok}", level="DEBUG")
@@ -302,13 +459,34 @@ class BossManager:
         # spawn_time'ı da otomatik olarak ileriye taşır.
         self.bot.combat.recalculate_times(target, attack_start)
 
+        ai_engine = getattr(getattr(self.bot, "brain", None), "ai_engine", None)
+        memory = getattr(ai_engine, "memory", None)
+
         if kill_ok:
+            if memory is not None and hasattr(memory, "update_boss_performance"):
+                try:
+                    memory.update_boss_performance(
+                        boss_name=str(target.get("aciklama", "")),
+                        kill_time=float(round(kill_time, 2)),
+                        success=True,
+                    )
+                except Exception as exc:
+                    self.bot.log(f"[AI_MEMORY] boss_kill guncelleme hatasi: {exc}", level="WARNING")
             if hasattr(self.bot, "reward_engine"):
                 self.bot.reward_engine.on_boss_killed(
                     boss_name=str(target.get("aciklama", "")),
                     kill_time=round(kill_time, 2),
                 )
         else:
+            if memory is not None and hasattr(memory, "update_boss_performance"):
+                try:
+                    memory.update_boss_performance(
+                        boss_name=str(target.get("aciklama", "")),
+                        kill_time=float(round(kill_time, 2)),
+                        success=False,
+                    )
+                except Exception as exc:
+                    self.bot.log(f"[AI_MEMORY] boss_fail guncelleme hatasi: {exc}", level="WARNING")
             if hasattr(self.bot, "reward_engine"):
                 self.bot.reward_engine.on_death(boss_name=str(target.get("aciklama", "")))
         return bool(kill_ok)
@@ -378,8 +556,27 @@ class BossManager:
 
         # â”€â”€ T-PRE anÄ±na kadar bekle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         wait_pre = window_open_ts - time.time()
-        if wait_pre > 0 and not self.bot._interruptible_wait(wait_pre):
-            return False
+        if wait_pre > 0:
+            self.bot.log(
+                f"[NAV_PULSE] Spawn oncesi bekleme pulse modunda: {wait_pre:.1f}s",
+                level="DEBUG",
+            )
+            while self.bot.running.is_set():
+                remaining = window_open_ts - time.time()
+                if remaining <= 0:
+                    break
+
+                if not self._check_navigation_pulse(
+                    target=target,
+                    area_image=area_image,
+                    area_conf=area_conf,
+                    region=region,
+                ):
+                    return False
+
+                if bool(target.get("_area_check_ok")):
+                    area_found = True
+                    break
 
         self.bot.log(
             f"[FlexScan] Pencere ACIK | {target['aciklama']} | "
@@ -393,6 +590,19 @@ class BossManager:
             now = time.time()
             if now >= window_close_ts:
                 break
+
+            # Spawn'a kadar navigasyon nabzini izle.
+            # Area bulunduysa karakterin durmasi normal kabul edilir.
+            if not area_found and not attack_done and now < spawn_ts:
+                if not self._check_navigation_pulse(
+                    target=target,
+                    area_image=area_image,
+                    area_conf=area_conf,
+                    region=region,
+                ):
+                    return False
+                if bool(target.get("_area_check_ok")):
+                    area_found = True
 
             # â”€â”€ 1. AREA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             # T-PRE'dan itibaren taranÄ±r; bir kez bulununca tekrar aranmaz.

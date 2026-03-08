@@ -478,8 +478,14 @@ def main():
     )
     parser.add_argument(
         "--log-root",
-        default=r"E:\LoABot_Training_Data\runtime_data\training_logs",
+        default=r"D:\LoABot_Training_Data\runtime_data\training_logs",
         help="Eğitim çıktı dizini (checkpoint, log, TB).",
+    )
+    parser.add_argument(
+        "--weights",
+        type=str,
+        default="",
+        help="Fine-tuning icin egitilmis .pt checkpoint yolu",
     )
     parser.add_argument("--train-ratio", type=float, default=0.8)
 
@@ -600,6 +606,10 @@ def main():
         pretrained=(not args.no_pretrained),
         dropout=args.dropout,
     ).to(device)
+    if args.weights and os.path.isfile(args.weights):
+        ckpt = torch.load(args.weights, map_location=device)
+        model.load_state_dict(ckpt["model_state_dict"])
+        print(f"[INFO] Pre-trained agirliklar yuklendi: {args.weights}")
 
     # Parametre sayısı
     total_params = sum(p.numel() for p in model.parameters())

@@ -492,11 +492,67 @@ class CombatManager:
         )
 
         if not upc:
+            self.bot.log("[RETURN_SOURCE] strategic_wait -> EXP_FARM (source=no_upcoming_boss)", level="DEBUG")
             self.bot.automator.return_to_exp_farm()
             return
 
+        current_layer = current.get("katman_id")
+        same_layer_upc = sorted(
+            [h for h in upc if h.get("katman_id") == current_layer],
+            key=lambda x: x["spawn_time"],
+        )
+        fast_chain_threshold = float(self.bot.settings.get("FAST_CHAIN_THRESHOLD_SN", 90.0))
+        if same_layer_upc:
+            same_layer_next = same_layer_upc[0]
+            same_layer_until_next = float(same_layer_next["spawn_time"]) - now
+            same_layer_head_start = float(same_layer_next.get("head_start_saniye", 0.0))
+            same_layer_until_ready = max(0.0, same_layer_until_next - max(0.0, same_layer_head_start))
+
+            # Hard guard: Ayni katta 90sn (ready penceresi) icindeyse asla EXP_FARM'a donme.
+            if same_layer_until_ready < fast_chain_threshold:
+                self.bot.log(
+                    f"[WAIT_SOURCE] hard_guard_same_layer_fast90: {same_layer_next['aciklama']} "
+                    f"(ready={int(same_layer_until_ready)}s, head_start={int(same_layer_head_start)}s)",
+                    level="WARNING",
+                )
+                self.bot._seal_visual_event(
+                    "strategic_wait",
+                    extra={
+                        "decision": "wait",
+                        "next_boss": str(same_layer_next.get("aciklama", "")),
+                        "time_until_next": round(same_layer_until_next, 1),
+                        "time_until_ready": round(same_layer_until_ready, 1),
+                        "head_start": round(same_layer_head_start, 1),
+                        "source": "rule_same_layer_fast90",
+                    },
+                )
+                return
+
         next_boss = upc[0]
         time_until_next = next_boss["spawn_time"] - now
+        head_start = float(next_boss.get("head_start_saniye", 0.0))
+        time_until_ready = max(0.0, float(time_until_next) - max(0.0, head_start))
+        same_layer = next_boss["katman_id"] == current["katman_id"]
+        same_layer_threshold = float(self.bot.settings.get("SAME_LAYER_KEEP_THRESHOLD_SN", 300.0))
+
+        # Kritik kural: ayni katmanda ve "ready" penceresi yakin ise AI return_to_farm dese bile haritada kal.
+        if same_layer and time_until_ready < same_layer_threshold:
+            self.bot.log(
+                f"Stratejik Bekleme: {next_boss['aciklama']} icin haritada kaliniyor "
+                f"(ready={int(time_until_ready)}s, head_start={int(head_start)}s)."
+            )
+            self.bot._seal_visual_event(
+                "strategic_wait",
+                extra={
+                    "decision": "wait",
+                    "next_boss": str(next_boss.get("aciklama", "")),
+                    "time_until_next": round(time_until_next, 1),
+                    "time_until_ready": round(time_until_ready, 1),
+                    "head_start": round(head_start, 1),
+                    "source": "rule_same_layer",
+                },
+            )
+            return
 
         ai_engine = getattr(self.bot, "brain", None)
         ai_engine = getattr(ai_engine, "ai_engine", None) if ai_engine else None
@@ -542,11 +598,21 @@ class CombatManager:
                         "source": "ai",
                     },
                 )
+                self.bot.log(
+                    f"[RETURN_SOURCE] strategic_wait -> EXP_FARM (source=ai, next={next_boss['aciklama']}, "
+                    f"until_next={int(time_until_next)}s)",
+                    level="DEBUG",
+                )
                 self.bot.automator.return_to_exp_farm()
                 return
 
+            self.bot.log(
+                "Stratejik bekleme AI karari yok; kural tabanli fallback uygulanacak.",
+                level="WARNING",
+            )
+
         threshold = float(self.bot.settings.get("BOSS_SWITCH_THRESHOLD_SN", 91))
-        if next_boss["katman_id"] == current["katman_id"] and time_until_next < threshold:
+        if same_layer and time_until_ready < threshold:
             self.bot.log(f"Stratejik Bekleme: {next_boss['aciklama']} icin haritada kaliniyor.")
             self.bot._seal_visual_event(
                 "strategic_wait",
@@ -554,6 +620,8 @@ class CombatManager:
                     "decision": "wait",
                     "next_boss": str(next_boss.get("aciklama", "")),
                     "time_until_next": round(time_until_next, 1),
+                    "time_until_ready": round(time_until_ready, 1),
+                    "head_start": round(head_start, 1),
                     "source": "rule",
                 },
             )
@@ -567,5 +635,10 @@ class CombatManager:
                 "time_until_next": round(time_until_next, 1),
                 "source": "rule",
             },
+        )
+        self.bot.log(
+            f"[RETURN_SOURCE] strategic_wait -> EXP_FARM (source=rule, next={next_boss['aciklama']}, "
+            f"until_next={int(time_until_next)}s, ready={int(time_until_ready)}s, same_layer={same_layer})",
+            level="DEBUG",
         )
         self.bot.automator.return_to_exp_farm()
