@@ -1,6 +1,8 @@
 ﻿# -*- coding: utf-8 -*-
 import time
 
+import cv2
+import numpy as np
 
 import os
 
@@ -11,7 +13,8 @@ class BossManager:
         self.bosslar = bot.bosslar
         self.settings = bot.settings
         self._last_nav_evasion_ts = 0.0
-        self._last_nav_attack_check_ts = 0.0
+        self._last_nav_motion_ts = time.time()
+        self._last_nav_reanchor_ts = 0.0
 
     def _reset_combat_state(self, reason: str = "cycle_end"):
         """
@@ -170,23 +173,6 @@ class BossManager:
         self.bot.log(f"{check_name}: bulunamadi", level="DEBUG")
         return not required
 
-    def _is_navigation_under_attack(self) -> bool:
-        """
-        NAV fazinda hasar orbundan saldiri algisi:
-        - PvP monitor acik olmasa da burada refleks amacli kullanilir.
-        """
-        cfg = getattr(self.bot, "pvp_config", {}) or {}
-        region = cfg.get("hp_orb_region")
-        image_name = cfg.get("hp_damaged_template")
-        if not isinstance(region, dict) or not image_name:
-            return False
-
-        confidence = float(cfg.get("hp_damage_confidence", 0.85))
-        try:
-            return bool(self.bot.vision.find(image_name, region, confidence))
-        except Exception:
-            return False
-
     def _run_navigation_evasion_combo(self) -> None:
         """
         Yolda saldiri altinda kalinca kisa kacis kombosu:
@@ -198,34 +184,80 @@ class BossManager:
         )
         self.bot.automator.press_key("space", label="nav_evasion_space_1")
         time.sleep(0.04)
-        self.bot.automator.press_key("q", label="nav_evasion_q")
+        self.bot.automator.press_key("q", label="nav_evasion_Q")
         time.sleep(0.04)
         self.bot.automator.press_key("space", label="nav_evasion_space_2")
 
-    def _maybe_run_navigation_evasion(self) -> None:
+    def _capture_navigation_gray(self) -> np.ndarray | None:
         """
-        NAV fazinda periyodik saldiri kontrolu + cooldown'lu kacis refleksi.
+        Nabiz olcumu icin ekrani griye cevirir ve karakterin merkez bolgesini maskeler.
         """
-        if not bool(self.settings.get("NAV_EVASION_ENABLED", True)):
-            return
+        try:
+            frame = self.bot.vision.capture_full_screen()
+            if frame is None:
+                return None
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray = cv2.resize(gray, (320, 180), interpolation=cv2.INTER_AREA)
+
+            h, w = gray.shape
+            x1, x2 = int(w * 0.35), int(w * 0.65)
+            y1, y2 = int(h * 0.30), int(h * 0.78)
+            gray[y1:y2, x1:x2] = 0
+            return gray
+        except Exception:
+            return None
+
+    def _run_navigation_reanchor_combo(self, target) -> None:
+        self.bot.log("[NAV_PULSE] Takilma suruyor, Re-Anchor tetikleniyor.", level="WARNING")
+        self._re_anchor(target)
+        self.bot.automator.press_key("z", label="nav_pulse_reanchor_z")
+
+    def _check_navigation_pulse(self, target) -> bool:
+        """
+        1 saniyelik nabiz kontrolu:
+        - Iki gri frame arasi fark cok dusukse once evasion, sonra gerekirse re-anchor.
+        """
         if not self.bot.running.is_set() or self.bot.paused:
-            return
+            return False
 
+        first = self._capture_navigation_gray()
+        if first is None:
+            return True
+
+        if not self.bot._interruptible_wait(1.0):
+            return False
+
+        second = self._capture_navigation_gray()
+        if second is None:
+            return True
+
+        diff = cv2.absdiff(first, second)
+        changed_ratio = float(np.count_nonzero(diff > 14)) / float(diff.size)
+        move_ratio_threshold = float(self.settings.get("NAV_PULSE_MOVE_RATIO_THRESHOLD", 0.015))
         now = time.time()
-        check_interval = float(self.settings.get("NAV_EVASION_CHECK_INTERVAL_SN", 0.45))
-        if (now - self._last_nav_attack_check_ts) < max(0.05, check_interval):
-            return
-        self._last_nav_attack_check_ts = now
 
-        if not self._is_navigation_under_attack():
-            return
+        if changed_ratio >= move_ratio_threshold:
+            self._last_nav_motion_ts = now
+            return True
 
-        cooldown = float(self.settings.get("NAV_EVASION_COOLDOWN_SN", 1.6))
-        if (now - self._last_nav_evasion_ts) < max(0.2, cooldown):
-            return
+        self.bot.log(
+            f"[NAV_PULSE] Dusuk hareket algisi: ratio={changed_ratio:.4f} (<{move_ratio_threshold:.4f})",
+            level="DEBUG",
+        )
 
-        self._last_nav_evasion_ts = now
-        self._run_navigation_evasion_combo()
+        evasion_cd = float(self.settings.get("NAV_EVASION_COOLDOWN_SN", 1.0))
+        if (now - self._last_nav_evasion_ts) >= max(0.2, evasion_cd):
+            self._last_nav_evasion_ts = now
+            self._run_navigation_evasion_combo()
+
+        reanchor_after = float(self.settings.get("NAV_PULSE_REANCHOR_AFTER_SN", 3.0))
+        reanchor_cd = float(self.settings.get("NAV_PULSE_REANCHOR_COOLDOWN_SN", 2.0))
+        if (now - self._last_nav_motion_ts) >= max(1.0, reanchor_after):
+            if (now - self._last_nav_reanchor_ts) >= max(0.5, reanchor_cd):
+                self._last_nav_reanchor_ts = now
+                self._run_navigation_reanchor_combo(target)
+                self._last_nav_motion_ts = time.time()
+        return True
 
     def _start_navigation(self, target, ui_protocol: str = None) -> bool:
         """
@@ -452,8 +484,33 @@ class BossManager:
 
         # T-PRE anÄ±na kadar bekle 
         wait_pre = window_open_ts - time.time()
-        if wait_pre > 0 and not self.bot._interruptible_wait(wait_pre):
-            return False
+        if wait_pre > 0:
+            self.bot.log(f"[NAV_PULSE] Spawn oncesi bekleme nabiz kontrolune alindi: {wait_pre:.1f}s", level="DEBUG")
+            while self.bot.running.is_set():
+                remaining = window_open_ts - time.time()
+                if remaining <= 0:
+                    break
+
+                # Hedefe erken ulasilmissa beklemeyi kes.
+                if not area_found and area_image and area_image != "default.png":
+                    if self.bot.vision.find(
+                        area_image,
+                        region,
+                        area_conf,
+                        target_data=target,
+                        stage="area_check",
+                    ):
+                        area_found = True
+                        target["_area_check_ok"] = True
+                        self.bot.log(f"[NAV_PULSE] AREA erken bulundu: {area_image}", level="DEBUG")
+                        self.bot._seal_visual_event(
+                            "area_check",
+                            extra={"boss_id": str(target.get("aciklama", "")), "image": area_image},
+                        )
+                        break
+
+                if not self._check_navigation_pulse(target):
+                    return False
 
         self.bot.log(
             f"[FlexScan] Pencere ACIK | {target['aciklama']} | "
@@ -468,10 +525,11 @@ class BossManager:
             if now >= window_close_ts:
                 break
 
-            # NAV fazinda (henuz boss saldirisi baslamadan) hasar algilanirsa
-            # yurugeyi bozmadan kisa kacis kombosu uygula.
-            if not attack_done:
-                self._maybe_run_navigation_evasion()
+            # Spawn'a kadar navigasyonda nabiz kontrolu devam eder.
+            # AREA bulunduysa karakterin durmasi normaldir; pulse/evasion tetikleme.
+            if not area_found and not attack_done and now < spawn_ts:
+                if not self._check_navigation_pulse(target):
+                    return False
 
             # 1. AREA 
             # T-PRE'dan itibaren taranÄ±r; bir kez bulununca tekrar aranmaz.

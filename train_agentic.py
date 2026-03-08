@@ -490,6 +490,12 @@ def main():
     )
     parser.add_argument("--no-pretrained", action="store_true")
     parser.add_argument("--dropout", type=float, default=0.3)
+    parser.add_argument(
+        "--weights",
+        type=str,
+        default="",
+        help="Fine-tuning icin egitilmis .pt checkpoint yolu",
+    )
 # ----------------------------------------------------------------------
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -594,6 +600,11 @@ def main():
         pretrained=(not args.no_pretrained),
         dropout=args.dropout,
     ).to(device)
+
+    if args.weights and os.path.isfile(args.weights):
+        ckpt = torch.load(args.weights, map_location=device)
+        model.load_state_dict(ckpt["model_state_dict"])
+        print(f"[INFO] Pre-trained agirliklar yuklendi: {args.weights}")
 
     # Parametre sayısı
     total_params = sum(p.numel() for p in model.parameters())
