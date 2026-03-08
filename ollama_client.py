@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 ollama_client.py — Yerel Ollama Vision-Language Model İstemcisi
 ================================================================
@@ -54,10 +53,19 @@ _SYSTEM_PROMPT = (
 # ══════════════════════════════════════════════════════════════════════════
 
 class OllamaClient:
+    """
+    Ollama Vision-Language model istemcisi.
+
+    Örnek kullanım:
+        client = OllamaClient(logger=bot, model="qwen2.5-vl:7b")
+        result = client.ask(frame_bgr, bot_state)
+        # → {"action": "key_a", "confidence": 0.82, "latency_ms": 1340}
+    """
+
     def __init__(
         self,
         logger,
-        model: str = "qwen3-vl:8b",
+        model: str = "qwen3-vl:4b",
         base_url: str = "http://localhost:11434",
         timeout_sec: float = 60.0,
         min_confidence: float = 0.50,
@@ -99,6 +107,17 @@ class OllamaClient:
         frame_bgr: np.ndarray,
         bot_state: Optional[Dict] = None,
     ) -> Optional[Dict]:
+        """
+        Ekran görüntüsünden aksiyon kararı alır.
+
+        Args:
+            frame_bgr : OpenCV BGR formatında ekran karesi
+            bot_state : Bot durumu sözlüğü (faz, konum, vb.)
+
+        Returns:
+            {"action": str, "confidence": float, "reasoning": str, "latency_ms": float}
+            veya None (hata / sunucu yok / güven düşük)
+        """
         if not _HAS_REQUESTS:
             self._log_msg("'requests' paketi eksik — pip install requests", "WARNING")
             return None

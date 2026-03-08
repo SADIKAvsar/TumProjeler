@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# modules/gui_manager.py
 import tkinter as tk
 from tkinter import messagebox, simpledialog
 from datetime import datetime
@@ -264,7 +264,7 @@ class GUIManager:
             pass
 
     def create_gui(self):
-        self.root.title("LoABot v5.9: AgenticNet")
+        self.root.title("LoA Bot v5.9 (Local-First)")
         self.root.configure(bg="black")
         self.root.wm_attributes("-topmost", True)
         # Yükseklik içerikten sonra otomatik hesaplanacak.

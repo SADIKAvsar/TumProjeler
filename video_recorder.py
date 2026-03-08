@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 video_recorder.py — LoABoTv5.9 Video Tabanlı Eğitim Verisi Kaydedici
 =====================================================================
@@ -718,22 +717,12 @@ class VideoRecorder:
         if not self._recording:
             return
 
-        # Kullanıcı olaylarını sadece müdahale niteliğindeyse veri setine yaz.
-        if event.source == "user":
-            data = dict(getattr(event, "data", {}) or {})
-            if not bool(data.get("is_intervention", False)):
-                return
-
-        action_label = f"{event.source}_{event.event_type}"
-        if event.source == "user":
-            action_label = f"user_intervention_{event.event_type}"
-
         # InputEvent -> log_action dönüşümü
         self.log_action(
             event_type=event.event_type,
             data=dict(event.data),
             source=event.source,
-            action_label=action_label,
+            action_label=f"{event.source}_{event.event_type}",
             phase=event.phase,
         )
 

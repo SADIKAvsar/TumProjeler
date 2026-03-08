@@ -1,4 +1,3 @@
-﻿# -*- coding: utf-8 -*-
 import time
 
 
@@ -19,7 +18,7 @@ class PvPManager:
         confidence = float(self.cfg.get("hp_damage_confidence", 0.85))
         skill_rotation = self.cfg.get("skill_rotation", ["q", "w", "e", "r"])
         check_interval = float(self.cfg.get("check_interval_sn", 0.7))
-        cooldown_after_attack = float(self.cfg.get("cooldown_after_attack_sn", 1.0))
+        cooldown_after_attack = float(self.cfg.get("cooldown_after_attack_sn", 3.0))
 
         if not isinstance(region, dict) or not image_name or not skill_rotation:
             self.bot.log("PvP monitor config eksik, thread durduruldu.")

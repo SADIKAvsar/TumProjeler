@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import datetime
 import logging
 import os
@@ -10,7 +9,7 @@ import cv2
 
 _MODULE_ROOT = os.path.dirname(os.path.abspath(__file__))
 _LEGACY_ROOT = os.path.dirname(_MODULE_ROOT)
-_PREFERRED_DATA_ROOT = os.environ.get("LOABOT_DATA_ROOT", r"D:\LoABot_Training_Data")
+_PREFERRED_DATA_ROOT = os.environ.get("LOABOT_DATA_ROOT", r"E:\LoABot_Training_Data")
 
 
 def project_path(rel_path: str) -> str:

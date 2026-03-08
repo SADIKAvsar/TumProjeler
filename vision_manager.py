@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 vision_manager.py — Görsel Algılama Motoru (v2.0 — Lean)
 =========================================================
@@ -27,6 +26,14 @@ try:
     from ultralytics import YOLO
 except Exception:
     YOLO = None
+
+try:
+    from core.event_types import EVT
+except Exception:
+    class _FallbackEVT:
+        VISION_UPDATE = "VISION_UPDATE"
+        OBJECT_FOUND = "OBJECT_FOUND"
+    EVT = _FallbackEVT()
 
 
 class VisionManager:
@@ -247,6 +254,16 @@ class VisionManager:
                 h = int(template.shape[0])
                 cx = x1 + (w // 2)
                 cy = y1 + (h // 2)
+                self._publish_find_events(
+                    template_name=template_name,
+                    region=region,
+                    confidence=confidence,
+                    score=max_val,
+                    center_x=cx,
+                    center_y=cy,
+                    stage=stage,
+                    target_data=target_data,
+                )
                 return (cx, cy, max_val)
 
         except Exception as exc:
@@ -257,3 +274,51 @@ class VisionManager:
             return None
 
         return None
+
+    def _publish_find_events(
+        self,
+        template_name: str,
+        region: dict,
+        confidence: float,
+        score: float,
+        center_x: int,
+        center_y: int,
+        stage: str = None,
+        target_data: dict = None,
+    ) -> None:
+        """
+        v6.0 EventBus yayini (backward-compatible):
+        - EventBus yoksa sessizce atlanir.
+        """
+        bus = getattr(self.bot, "event_bus", None)
+        if bus is None:
+            return
+
+        target_id = ""
+        if isinstance(target_data, dict):
+            target_id = str(target_data.get("aciklama", target_data.get("boss_id", "")))
+
+        found_payload = {
+            "template": str(template_name),
+            "stage": str(stage or ""),
+            "target_id": target_id,
+            "confidence_threshold": float(confidence),
+            "score": float(score),
+            "center": {"x": int(center_x), "y": int(center_y)},
+            "region": dict(region or {}),
+            "frame_ts": time.time(),
+        }
+
+        try:
+            bus.publish(EVT.OBJECT_FOUND, found_payload, source="vision_manager.find")
+            bus.publish(
+                EVT.VISION_UPDATE,
+                {
+                    "objects": [found_payload],
+                    "frame_ts": found_payload["frame_ts"],
+                    "stage": found_payload["stage"],
+                },
+                source="vision_manager.find",
+            )
+        except Exception as exc:
+            self.bot.log(f"[VISION] EventBus publish hatasi: {exc}", level="WARNING")

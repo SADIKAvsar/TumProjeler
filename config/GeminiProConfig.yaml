@@ -141,7 +141,7 @@ module_general:
     LOCAL_AI_MEMORY_PATH: D:\\LoABot_Training_Data\\runtime_data\\ai_memory.json
     LOCAL_AI_HISTORY_PATH: D:\\LoABot_Training_Data\\runtime_data\\decision_history.jsonl
     OLLAMA_ENABLED: true
-    OLLAMA_MODEL: qwen3-vl:8b
+    OLLAMA_MODEL: qwen3-vl:4b
     OLLAMA_BASE_URL: http://localhost:11434
     OLLAMA_TIMEOUT_SEC: 20.0
     OLLAMA_MIN_CONFIDENCE: 0.50
@@ -240,6 +240,7 @@ module_demon_boss:
   meta:
     aciklama: Demon Boss saldırı modülü için tüm veriler.
     
+  # --- DÜZELTME: Tüm 'region_key'ler 'region_full_screen' oldu ---
   coordinates:
     server_s575: {x: 1400, y: 680, anchor: {image_file: server_s575.png, region_key: region_giris, confidence: 0.8}}
     etkinlik_oku_open: {x: 2237, y: 98, anchor: {image_file: etkinlik_oku_open.png, region_key: region_ust_menu, confidence: 0.8}}

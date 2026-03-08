@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 reward_engine.py — Ödül Hesaplama Motoru
 ==========================================

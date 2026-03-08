@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import argparse
 import json
 import os
@@ -288,10 +287,10 @@ def _split_simple(rows: List[Dict], train_ratio: float, seed: int):
 
 def main():
     parser = argparse.ArgumentParser(description="LoABot veri seti olusturucu (parallel scan + train/test split)")
-    parser.add_argument("--data-root", default=r"D:\LoABot_Training_Data", help="Toplanan ham veri kok klasoru")
+    parser.add_argument("--data-root", default=r"E:\LoABot_Training_Data", help="Toplanan ham veri kok klasoru")
     parser.add_argument(
         "--output-root",
-        default=r"D:\LoABot_Training_Data\datasets",
+        default=r"E:\LoABot_Training_Data\datasets",
         help="Manifest cikti klasoru",
     )
     parser.add_argument("--train-ratio", type=float, default=0.8, help="Train orani (0-1)")

@@ -25,7 +25,7 @@ REM ===================================================================
 
 REM === Klasor Yollari ===
 set "VIDEO_ROOT=D:\LoABot_Training_Data\videos"
-set "TRAIN_LOG_ROOT=D:\LoABot_Training_Data\runtime_data\training_logs"
+set "TRAIN_LOG_ROOT=E:\LoABot_Training_Data\runtime_data\training_logs"
 
 REM === Egitim Parametreleri ===
 set "EPOCHS=60"
@@ -35,8 +35,6 @@ set "IMAGE_SIZE=224"
 set "LR=0.0001"
 set "TRAIN_RATIO=0.8"
 set "PATIENCE=8"
-set "BATCH_SIZE=24"
-set "NUM_WORKERS=1"
 
 REM === Python Yolu ===
 set "PYTHON=C:\LoABot\.venv\Scripts\python.exe"
@@ -135,8 +133,8 @@ REM    Cikti  : Sigmoid -> (B, 2) normalize koordinat [0, 1]
 REM    Loss   : MSELoss (sadece mouse_click orneklerinde)
 REM    Metrik : val_mse_loss, val_mean_dist (Oklid mesafesi)
 REM
-REM  --batch-size ve --num-workers guvenli sabit degerlerle geciliyor:
-REM    decode tarafindaki ffmpeg/decord bellek sivramalarini azaltir.
+REM  --batch-size ve --num-workers gecilmiyor:
+REM    GPU VRAM ve CPU cekirdek sayisina gore otomatik ayarlanir.
 REM
 
 echo [3/4] Alamet Temporal YZ egitimi basliyor...
@@ -149,8 +147,6 @@ echo   LR          : %LR%
 echo   Image Size  : %IMAGE_SIZE%x%IMAGE_SIZE%
 echo   Train Ratio : %TRAIN_RATIO%
 echo   Patience    : %PATIENCE% (early stopping)
-echo   Batch Size  : %BATCH_SIZE%
-echo   Num Workers : %NUM_WORKERS%
 echo  ------------------------------------------
 echo.
 
@@ -163,9 +159,7 @@ echo.
   --epochs %EPOCHS% ^
   --lr %LR% ^
   --train-ratio %TRAIN_RATIO% ^
-  --early-stop-patience %PATIENCE% ^
-  --batch-size %BATCH_SIZE% ^
-  --num-workers %NUM_WORKERS%
+  --early-stop-patience %PATIENCE%
 
 set "TRAIN_CODE=%ERRORLEVEL%"
 

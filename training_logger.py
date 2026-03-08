@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import json
 import threading
 import time
@@ -15,7 +14,7 @@ class TrainingLogger:
     def __init__(self, bot):
         self.bot = bot
         self.enabled = bool(self.bot.settings.get("TRAINING_LOGGER_ENABLED", True))
-        self.root = Path(self.bot.settings.get("TRAINING_LOGGER_ROOT", r"D:\LoABot_Training_Data\AGENTIC_LOGS"))
+        self.root = Path(self.bot.settings.get("TRAINING_LOGGER_ROOT", r"E:\LoABot_Training_Data\AGENTIC_LOGS"))
         self.queue_maxsize = int(self.bot.settings.get("TRAINING_LOGGER_QUEUE_MAXSIZE", 50000))
 
         self._queue = Queue(maxsize=max(1024, self.queue_maxsize))
@@ -144,3 +143,4 @@ class TrainingLogger:
 
     def log_outcome(self, outcome_name: str, payload: dict = None):
         self._enqueue("outcome", {"name": str(outcome_name or "unknown_outcome"), **dict(payload or {})})
+

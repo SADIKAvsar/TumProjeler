@@ -1,8 +1,5 @@
-﻿# -*- coding: utf-8 -*-
 import time
 
-import cv2
-import numpy as np
 
 import os
 
@@ -12,37 +9,38 @@ class BossManager:
         self.bot = bot
         self.bosslar = bot.bosslar
         self.settings = bot.settings
-        self._last_nav_evasion_ts = 0.0
-        self._last_nav_motion_ts = time.time()
-        self._last_nav_reanchor_ts = 0.0
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  STATE RESET — State Lock önleyici merkezi temizlik
+    # ═══════════════════════════════════════════════════════════════════
 
     def _reset_combat_state(self, reason: str = "cycle_end"):
         """
-        Boss saldÄ±rÄ± dÃ¶ngÃ¼sÃ¼ tamamlandÄ±ÄŸÄ±nda (baÅŸarÄ±lÄ±/baÅŸarÄ±sÄ±z/hata)
-        tÃ¼m durum bayraklarÄ±nÄ± temizler.
+        Boss saldırı döngüsü tamamlandığında (başarılı/başarısız/hata)
+        tüm durum bayraklarını temizler.
 
-        Bu metot Ã§aÄŸrÄ±lmadan bir sonraki dÃ¶ngÃ¼ iterasyonu
-        is_in_active_combat() == True gÃ¶rerek yeni saldÄ±rÄ±yÄ± BLOKLAR.
+        Bu metot çağrılmadan bir sonraki döngü iterasyonu
+        is_in_active_combat() == True görerek yeni saldırıyı BLOKLAR.
 
-        KÃ¶k neden: _global_phase loot/combat'ta kalÄ±yordu â†’ State Lock.
+        Kök neden: _global_phase loot/combat'ta kalıyordu → State Lock.
         """
-        # 1. SaldÄ±rÄ± hedefini temizle (zaten finally'de yapÄ±lÄ±yor ama gÃ¼venlik)
+        # 1. Saldırı hedefini temizle (zaten finally'de yapılıyor ama güvenlik)
         self.bot.attacking_target_aciklama = None
 
-        # 2. _global_phase'i IDLE'a dÃ¶ndÃ¼r â€” KRÄ°TÄ°K FIX
-        #    stop_global_mission() bunu GARANTÄ° ETMÄ°YOR.
+        # 2. _global_phase'i IDLE'a döndür — KRİTİK FIX
+        #    stop_global_mission() bunu GARANTİ ETMİYOR.
         if hasattr(self.bot, "_global_phase"):
             old_phase = str(getattr(self.bot, "_global_phase", ""))
             self.bot._global_phase = "IDLE"
-            # Staleness guard iÃ§in timestamp'i de sÄ±fÄ±rla
+            # Staleness guard için timestamp'i de sıfırla
             self.bot._global_phase_ts = time.time()
             if old_phase and old_phase.upper() != "IDLE":
                 self.bot.log(
-                    f"[STATE_RESET] _global_phase: {old_phase} â†’ IDLE (neden: {reason})",
+                    f"[STATE_RESET] _global_phase: {old_phase} → IDLE (neden: {reason})",
                     level="DEBUG",
                 )
 
-        # 3. stop_global_mission'Ä± da Ã§aÄŸÄ±r (varsa) â€” log/metric tutarlÄ±lÄ±ÄŸÄ±
+        # 3. stop_global_mission'ı da çağır (varsa) — log/metric tutarlılığı
         if hasattr(self.bot, "stop_global_mission"):
             try:
                 self.bot.stop_global_mission(reason=reason)
@@ -173,92 +171,6 @@ class BossManager:
         self.bot.log(f"{check_name}: bulunamadi", level="DEBUG")
         return not required
 
-    def _run_navigation_evasion_combo(self) -> None:
-        """
-        Yolda saldiri altinda kalinca kisa kacis kombosu:
-        Space -> q -> Space
-        """
-        self.bot.log(
-            "[NAV_EVASION] Saldiri algilandi, kacis kombosu uygulaniyor: Space -> q -> Space",
-            level="WARNING",
-        )
-        self.bot.automator.press_key("space", label="nav_evasion_space_1")
-        time.sleep(0.04)
-        self.bot.automator.press_key("q", label="nav_evasion_Q")
-        time.sleep(0.04)
-        self.bot.automator.press_key("space", label="nav_evasion_space_2")
-
-    def _capture_navigation_gray(self) -> np.ndarray | None:
-        """
-        Nabiz olcumu icin ekrani griye cevirir ve karakterin merkez bolgesini maskeler.
-        """
-        try:
-            frame = self.bot.vision.capture_full_screen()
-            if frame is None:
-                return None
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray = cv2.resize(gray, (320, 180), interpolation=cv2.INTER_AREA)
-
-            h, w = gray.shape
-            x1, x2 = int(w * 0.35), int(w * 0.65)
-            y1, y2 = int(h * 0.30), int(h * 0.78)
-            gray[y1:y2, x1:x2] = 0
-            return gray
-        except Exception:
-            return None
-
-    def _run_navigation_reanchor_combo(self, target) -> None:
-        self.bot.log("[NAV_PULSE] Takilma suruyor, Re-Anchor tetikleniyor.", level="WARNING")
-        self._re_anchor(target)
-        self.bot.automator.press_key("z", label="nav_pulse_reanchor_z")
-
-    def _check_navigation_pulse(self, target) -> bool:
-        """
-        1 saniyelik nabiz kontrolu:
-        - Iki gri frame arasi fark cok dusukse once evasion, sonra gerekirse re-anchor.
-        """
-        if not self.bot.running.is_set() or self.bot.paused:
-            return False
-
-        first = self._capture_navigation_gray()
-        if first is None:
-            return True
-
-        if not self.bot._interruptible_wait(1.0):
-            return False
-
-        second = self._capture_navigation_gray()
-        if second is None:
-            return True
-
-        diff = cv2.absdiff(first, second)
-        changed_ratio = float(np.count_nonzero(diff > 14)) / float(diff.size)
-        move_ratio_threshold = float(self.settings.get("NAV_PULSE_MOVE_RATIO_THRESHOLD", 0.015))
-        now = time.time()
-
-        if changed_ratio >= move_ratio_threshold:
-            self._last_nav_motion_ts = now
-            return True
-
-        self.bot.log(
-            f"[NAV_PULSE] Dusuk hareket algisi: ratio={changed_ratio:.4f} (<{move_ratio_threshold:.4f})",
-            level="DEBUG",
-        )
-
-        evasion_cd = float(self.settings.get("NAV_EVASION_COOLDOWN_SN", 1.0))
-        if (now - self._last_nav_evasion_ts) >= max(0.2, evasion_cd):
-            self._last_nav_evasion_ts = now
-            self._run_navigation_evasion_combo()
-
-        reanchor_after = float(self.settings.get("NAV_PULSE_REANCHOR_AFTER_SN", 3.0))
-        reanchor_cd = float(self.settings.get("NAV_PULSE_REANCHOR_COOLDOWN_SN", 2.0))
-        if (now - self._last_nav_motion_ts) >= max(1.0, reanchor_after):
-            if (now - self._last_nav_reanchor_ts) >= max(0.5, reanchor_cd):
-                self._last_nav_reanchor_ts = now
-                self._run_navigation_reanchor_combo(target)
-                self._last_nav_motion_ts = time.time()
-        return True
-
     def _start_navigation(self, target, ui_protocol: str = None) -> bool:
         """
         Boss listesi ve hedef boss tiklamasini AI ui_protocol kararina gore baslatir.
@@ -321,25 +233,13 @@ class BossManager:
         ]
         return self.bot._run_sequence(seq, self.bot.coordinates, context_target=target)
 
-    def _refresh_interrupted_spawn(self, target) -> None:
-        """
-        DÃ¶vÃ¼ÅŸ tam baÅŸlayamadan kesilen akÄ±ÅŸlarda spawn_time'Ä±n stale kalmasÄ±nÄ± Ã¶nler.
-        """
-        combat = getattr(self.bot, "combat", None)
-        if combat is None or not hasattr(combat, "recalculate_times_interrupted"):
-            return
-        try:
-            combat.recalculate_times_interrupted(target)
-        except Exception as exc:
-            self.bot.log(f"[INTERRUPT] Spawn refresh hatasi: {exc}", level="WARNING")
-
     def execute_precise_boss_flow(self, target, ui_protocol: str = None) -> bool:
         """
         Esnek zaman pencereli hassas akis:
         - T-PRE: Tarama penceresi acilir (SCAN_WINDOW_PRE_SN, varsayilan 5sn)
         - T-PRE..T=0 : Area tarama (bir kez bulununca yeniden aramaz)
         - T=0..T+POST: Spawn + saldiri + victory (SCAN_WINDOW_POST_SN, varsayilan 5sn)
-        - Victory: Erken cikis AI 10sn pencereyi bekleme
+        - Victory: Erken cikis â€” 10sn pencereyi bekleme
         """
         if not hasattr(self.bot, "combat"):
             return False
@@ -350,7 +250,6 @@ class BossManager:
 
         protocol_name = str(ui_protocol or "").strip().upper() or self._derive_safe_protocol(target)
         if not self._wait_for_navigation_window(target, protocol_name):
-            self._refresh_interrupted_spawn(target)
             return False
 
         self.bot.log(
@@ -370,7 +269,7 @@ class BossManager:
             reason=f"boss_{target.get('aciklama')}_start",
             extra={"boss_id": str(target.get("aciklama", "unknown"))},
         )
-        # â˜… Staleness guard: phase baÅŸlangÄ±Ã§ zamanÄ±nÄ± kaydet
+        # ★ Staleness guard: phase başlangıç zamanını kaydet
         self.bot._global_phase_ts = time.time()
 
         nav_ok = self._start_navigation(target, ui_protocol=protocol_name)
@@ -382,12 +281,11 @@ class BossManager:
             )
             if hasattr(self.bot, "reward_engine"):
                 self.bot.reward_engine.on_death(boss_name=str(target.get("aciklama", "")))
-            self._refresh_interrupted_spawn(target)
             return False
 
         self.bot.automator.press_key("z")
 
-        # PlanlI spawn zamanI = saldÄ±rÄ± referans noktasÄ± (recalculate_times iÃ§in)
+        # PlanlÄ± spawn zamanÄ± = saldÄ±rÄ± referans noktasÄ± (recalculate_times iÃ§in)
         attack_start = float(spawn_ts)
         _combat_start_ts = time.time()
 
@@ -399,55 +297,51 @@ class BossManager:
             {"boss_id": str(target.get("aciklama", "unknown")), "success": bool(kill_ok), "reason": "flex_scan"},
         )
 
-        # â˜… FIX: Boss sabit periyotla respawn eder â€” baÅŸarÄ±lÄ±/baÅŸarÄ±sÄ±z fark etmez.
-        # recalculate_times her zaman Ã§aÄŸrÄ±lmalÄ±; catch-up mantÄ±ÄŸÄ± stale
-        # spawn_time'Ä± da otomatik olarak ileriye taÅŸÄ±r.
+        # ★ FIX (Codex): Boss sabit periyotla respawn eder — başarılı/başarısız fark etmez.
+        # recalculate_times her zaman çağrılmalı; catch-up mantığı stale
+        # spawn_time'ı da otomatik olarak ileriye taşır.
         self.bot.combat.recalculate_times(target, attack_start)
 
-        ai_engine = getattr(getattr(self.bot, "brain", None), "ai_engine", None)
-        memory = getattr(ai_engine, "memory", None)
-
         if kill_ok:
-            # GUI "Boss: X kill" degeri AIEngine -> MemoryManager metadata.total_bosses_killed
-            # alanindan okunuyor. update_boss_performance(success=True) bu sayaci artirir.
-            if memory is not None and hasattr(memory, "update_boss_performance"):
-                try:
-                    memory.update_boss_performance(
-                        boss_name=str(target.get("aciklama", "")),
-                        kill_time=float(round(kill_time, 2)),
-                        success=True,
-                    )
-                except Exception as exc:
-                    self.bot.log(f"[AI_MEMORY] boss_kill guncelleme hatasi: {exc}", level="WARNING")
             if hasattr(self.bot, "reward_engine"):
                 self.bot.reward_engine.on_boss_killed(
                     boss_name=str(target.get("aciklama", "")),
                     kill_time=round(kill_time, 2),
                 )
         else:
-            if memory is not None and hasattr(memory, "update_boss_performance"):
-                try:
-                    memory.update_boss_performance(
-                        boss_name=str(target.get("aciklama", "")),
-                        kill_time=float(round(kill_time, 2)),
-                        success=False,
-                    )
-                except Exception as exc:
-                    self.bot.log(f"[AI_MEMORY] boss_fail guncelleme hatasi: {exc}", level="WARNING")
             if hasattr(self.bot, "reward_engine"):
                 self.bot.reward_engine.on_death(boss_name=str(target.get("aciklama", "")))
         return bool(kill_ok)
 
     def _unified_spawn_sequence(self, target, spawn_ts: float) -> bool:
-     
-        POLL = 0.1  # 100ms  non-blocking hassasiyet
+        """
+        T-PRE / T+POST esnek pencere tarayÄ±cÄ±sÄ±.
+
+        HiyerarÅŸik durum makinesi:
+          area â†’ spawn â†’ saldÄ±rÄ± â†’ victory
+
+        Kurallar:
+          - Bir gÃ¶rsel bulununca o durum True kalÄ±r, yeniden aranmaz.
+          - Victory yakalanÄ±nca dÃ¶ngÃ¼ anÄ±nda kÄ±rÄ±lÄ±r (erken Ã§Ä±kÄ±ÅŸ).
+          - Aksiyon bitince tÃ¼m durumlar otomatik sÄ±fÄ±rlanÄ±r (yerel deÄŸiÅŸkenler).
+          - 200ms poll â†’ saniyede 5 kontrol, UI/sistem kasma yok.
+
+        Args:
+            target   : Boss hedef dict'i
+            spawn_ts : Beklenen doÄŸma Unix zamanÄ±
+
+        Returns:
+            True  â†’ kill onaylandÄ± (ya da onay gerektirmeyen config)
+            False â†’ zaman aÅŸÄ±mÄ±, bot durumu veya kritik hata
+        """
+        POLL = 0.1  # 100ms â€” non-blocking hassasiyet
         PRE  = float(self.settings.get("SCAN_WINDOW_PRE_SN",  5.0))  # T-5
         POST = float(self.settings.get("SCAN_WINDOW_POST_SN", 5.0))  # T+5
 
         window_open_ts  = spawn_ts - PRE
         window_close_ts = spawn_ts + POST
 
-        # GÃ¶rsel konfigÃ¼rasyonlarÄ±nÄ± hazÄ±rla
+        # â”€â”€ GÃ¶rsel konfigÃ¼rasyonlarÄ±nÄ± hazÄ±rla â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         try:
             area_data = self.bot.vision.get_boss_visual_data(target, "area_check") or {}
         except Exception:
@@ -473,7 +367,7 @@ class BossManager:
             "region_full_screen", {"x": 0, "y": 0, "w": 2560, "h": 1440}
         )
 
-        # Durum bayraklar (yerel AI her ÅŸartda sÄ±fÄ±rlanÄ±r)
+        # â”€â”€ Durum bayraklarÄ± (yerel â†’ her Ã§aÄŸrÄ±da sÄ±fÄ±rlanÄ±r) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         area_found    = False
         spawn_found   = False
         attack_done   = False
@@ -482,35 +376,10 @@ class BossManager:
 
         target["_area_check_ok"] = False
 
-        # T-PRE anÄ±na kadar bekle 
+        # â”€â”€ T-PRE anÄ±na kadar bekle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         wait_pre = window_open_ts - time.time()
-        if wait_pre > 0:
-            self.bot.log(f"[NAV_PULSE] Spawn oncesi bekleme nabiz kontrolune alindi: {wait_pre:.1f}s", level="DEBUG")
-            while self.bot.running.is_set():
-                remaining = window_open_ts - time.time()
-                if remaining <= 0:
-                    break
-
-                # Hedefe erken ulasilmissa beklemeyi kes.
-                if not area_found and area_image and area_image != "default.png":
-                    if self.bot.vision.find(
-                        area_image,
-                        region,
-                        area_conf,
-                        target_data=target,
-                        stage="area_check",
-                    ):
-                        area_found = True
-                        target["_area_check_ok"] = True
-                        self.bot.log(f"[NAV_PULSE] AREA erken bulundu: {area_image}", level="DEBUG")
-                        self.bot._seal_visual_event(
-                            "area_check",
-                            extra={"boss_id": str(target.get("aciklama", "")), "image": area_image},
-                        )
-                        break
-
-                if not self._check_navigation_pulse(target):
-                    return False
+        if wait_pre > 0 and not self.bot._interruptible_wait(wait_pre):
+            return False
 
         self.bot.log(
             f"[FlexScan] Pencere ACIK | {target['aciklama']} | "
@@ -519,19 +388,13 @@ class BossManager:
             f"spawn={len(spawn_images)} victory={len(victory_images)}"
         )
 
-        # Ana tarama dÃ¶ngÃ¼sÃ¼
+        # â”€â”€ Ana tarama dÃ¶ngÃ¼sÃ¼ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         while self.bot.running.is_set():
             now = time.time()
             if now >= window_close_ts:
                 break
 
-            # Spawn'a kadar navigasyonda nabiz kontrolu devam eder.
-            # AREA bulunduysa karakterin durmasi normaldir; pulse/evasion tetikleme.
-            if not area_found and not attack_done and now < spawn_ts:
-                if not self._check_navigation_pulse(target):
-                    return False
-
-            # 1. AREA 
+            # â”€â”€ 1. AREA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             # T-PRE'dan itibaren taranÄ±r; bir kez bulununca tekrar aranmaz.
             if not area_found and area_image and area_image != "default.png":
                 if self.bot.vision.find(
@@ -546,7 +409,7 @@ class BossManager:
                         extra={"boss_id": str(target.get("aciklama", "")), "image": area_image},
                     )
 
-            # 2. SPAWN 
+            # â”€â”€ 2. SPAWN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             # T=0'dan itibaren taranÄ±r; bir kez bulununca tekrar aranmaz.
             if not spawn_found and spawn_enabled and spawn_images and now >= spawn_ts:
                 for img in spawn_images:
@@ -563,7 +426,7 @@ class BossManager:
                         )
                         break
 
-            # 3. SALDIRI 
+            # â”€â”€ 3. SALDIRI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             # Spawn doÄŸrulandÄ±ÄŸÄ±nda VEYA T=0 geÃ§tiÄŸinde (spawn onayÄ± opsiyonel).
             if not attack_done and (spawn_found or now >= spawn_ts):
                 self.bot.set_global_mission_phase(
@@ -576,7 +439,7 @@ class BossManager:
                 attack_done = True
                 self.bot.log(f"[FlexScan] SALDIRI: {target['aciklama']}")
 
-            # 4. VICTORY 
+            # â”€â”€ 4. VICTORY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             # SaldÄ±rÄ± baÅŸladÄ±ktan sonra taranÄ±r; bulununca ERKEN Ã‡IKIÅ.
             if attack_done and not victory_found and victory_images:
                 for img in victory_images:
@@ -590,12 +453,12 @@ class BossManager:
                             "victory",
                             extra={"boss_id": str(target.get("aciklama", "")), "image": img},
                         )
-                        self.bot.log(f"[FlexScan] VICTORY - erken cikis: {img}")
+                        self.bot.log(f"[FlexScan] VICTORY â€” erken cikis: {img}")
                         break
                 if victory_found:
-                    break  # ERKEN Ã‡IKIÅ: 10sn pencereyi bekleme
+                    break  # â† ERKEN Ã‡IKIÅ: 10sn pencereyi bekleme
 
-            # 100ms bekleme (non-blocking) 
+            # â”€â”€ 100ms bekleme (non-blocking) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             time.sleep(POLL)
 
         self.bot.log(
@@ -604,8 +467,9 @@ class BossManager:
             f"attack={attack_done} victory={victory_found}"
         )
 
-        # SonuÃ§ deÄŸerlendirmesi
+        # â”€â”€ SonuÃ§ deÄŸerlendirmesi â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if not victory_images:
+            # Victory gÃ¶rseli yapÄ±landÄ±rÄ±lmamÄ±ÅŸ â†’ saldÄ±rÄ± olduysa baÅŸarÄ± say
             if not attack_done:
                 # HiÃ§ saldÄ±rÄ± olmadÄ±ysa fallback bekleme (legacy davranÄ±ÅŸ)
                 return self.bot._interruptible_wait(4.0)
@@ -624,7 +488,7 @@ class BossManager:
         """
         90s kurali:
         - ayni katman
-        - head_start dikkate alinmis kalan sure < 90
+        - kalan sure < 90
         - yurume suresi < 90
         """
         now = time.time()
@@ -642,10 +506,7 @@ class BossManager:
             return None
 
         next_boss = sorted(same_map, key=lambda x: x["spawn_time"])[0]
-        head_start = float(next_boss.get("head_start_saniye", 0.0))
-        # Fast-chain karari spawn anina gore degil "navigasyon baslama" anina gore verilir.
-        ready_at = float(next_boss["spawn_time"]) - max(0.0, head_start)
-        remaining = ready_at - now
+        remaining = next_boss["spawn_time"] - now
         walk_time_enabled = bool(self.settings.get("WALK_TIME_ENABLED", False))
         walk_time = self.bot.combat.get_walk_time(current["aciklama"], next_boss["aciklama"]) if walk_time_enabled else 0
 
@@ -803,9 +664,9 @@ class BossManager:
                 target, selected_protocol = self._select_target_with_protocol(ready)
                 success = False
 
-                # Episode baÅŸlangÄ±cÄ±: EXP_FARM'dayken kaydÄ± baÅŸlat.
+                # Episode başlangıcı: EXP_FARM'dayken kaydı başlat.
                 # 1.0 saniyelik warmup: rolling buffer (WINDOW_SIZE=10 frame, 10 FPS)
-                # dolmadan ilk navigasyon seal'i boÅŸ pencere yakalar.
+                # dolmadan ilk navigasyon seal'i boş pencere yakalar.
                 self.bot.auto_start_recording("boss_attack", timeout_sec=300)
                 time.sleep(1.0)  # Buffer warmup: 10 frame / 10 FPS = 1.0s
 
@@ -813,14 +674,14 @@ class BossManager:
                     success = self._execute_single_attack_attempt(target, selected_protocol)
 
                     if success:
-                        # Ganimet, zincir ve stratejik bekleme BÄ°TTÄ°KTEN SONRA flush:
+                        # Ganimet, zincir ve stratejik bekleme BİTTİKTEN SONRA flush:
                         self._handle_post_attack_logic(target)
-                        # Video: baÅŸarÄ±lÄ± oturumu etiketle
+                        # Video: başarılı oturumu etiketle
                         vid = getattr(self.bot, "video_recorder", None)
                         if vid is not None and vid.is_recording:
                             boss_id = str(target.get("aciklama", "unknown"))
                             vid.stop(success=True, reason=f"boss_{boss_id}_success")
-                        # â˜… FIX: State Lock Ã¶nleyici â€” phase'i IDLE'a Ã§ek
+                        # ★ FIX: State Lock önleyici — phase'i IDLE'a çek
                         self._reset_combat_state(
                             reason=f"boss_{target.get('aciklama')}_success"
                         )
@@ -828,29 +689,27 @@ class BossManager:
                         if hasattr(self.bot, "reward_engine"):
                             self.bot.reward_engine.on_restart(reason="boss_flow_failed")
                         self.bot.automator.return_to_exp_farm(force_restart_if_failed=True)
-                        # â˜… FIX: State Lock Ã¶nleyici â€” fail'de de phase temizle
+                        # ★ FIX: State Lock önleyici — fail'de de phase temizle
                         self._reset_combat_state(
                             reason=f"boss_{target.get('aciklama')}_failed"
                         )
                 finally:
-                    # Her saldÄ±rÄ± giriÅŸimi sonrasÄ± zaman damgasÄ± gÃ¼ncelle
+                    # Her saldırı girişimi sonrası zaman damgası güncelle
                     target["_last_attack_ts"] = time.time()
-                    # Video: baÅŸarÄ±sÄ±zsa burada durdur (baÅŸarÄ±lÄ±ysa yukarÄ±da durdu)
+                    # Video: başarısızsa burada durdur (başarılıysa yukarıda durdu)
                     vid = getattr(self.bot, "video_recorder", None)
                     if vid is not None and vid.is_recording and not success:
                         boss_id = str(target.get("aciklama", "unknown"))
                         vid.stop(success=False, reason=f"boss_{boss_id}_fail")
                     self.bot.auto_stop_recording()
-                    # â˜… FIX: SON SAVUNMA HATTI â€” ne olursa olsun phase'i temizle.
-                    #   YukarÄ±daki success/fail bloklarÄ±ndan biri zaten Ã§aÄŸÄ±rmÄ±ÅŸ olsa bile
-                    #   idempotent olduÄŸu iÃ§in tekrar Ã§aÄŸÄ±rmak gÃ¼venlidir.
+                    # ★ FIX: SON SAVUNMA HATTI — ne olursa olsun phase'i temizle.
+                    #   Yukarıdaki success/fail bloklarından biri zaten çağırmış olsa bile
+                    #   idempotent olduğu için tekrar çağırmak güvenlidir.
                     self._reset_combat_state(reason="finally_guard")
 
             except Exception as exc:
                 self.bot.log(f"BossManager hatasi: {exc}")
-                if "target" in locals() and isinstance(target, dict):
-                    self._refresh_interrupted_spawn(target)
-                # â˜… FIX: Hata durumunda da tÃ¼m state'i temizle
+                # ★ FIX: Hata durumunda da tüm state'i temizle
                 self._reset_combat_state(reason=f"exception_{type(exc).__name__}")
                 if hasattr(self.bot, "auto_stop_recording"):
                     self.bot.auto_stop_recording()
@@ -909,13 +768,13 @@ class BossManager:
 
             current_target = next_boss
 
-        # â˜… FIX: Zincir bitti, stratejik bekleme Ã¶ncesi LOOT fazÄ±nÄ± temizle.
-        #   check_strategic_wait() _global_phase'i DEÄÄ°ÅTÄ°RMEZ;
-        #   burada IDLE'a Ã§ekmezsen is_in_active_combat() True kalÄ±r.
+        # ★ FIX: Zincir bitti, stratejik bekleme öncesi LOOT fazını temizle.
+        #   check_strategic_wait() _global_phase'i DEĞİŞTİRMEZ;
+        #   burada IDLE'a çekmezsen is_in_active_combat() True kalır.
         if hasattr(self.bot, "_global_phase"):
             self.bot._global_phase = "IDLE"
             self.bot.log(
-                "[STATE_RESET] Post-attack: _global_phase â†’ IDLE (zincir sonu)",
+                "[STATE_RESET] Post-attack: _global_phase → IDLE (zincir sonu)",
                 level="DEBUG",
             )
 

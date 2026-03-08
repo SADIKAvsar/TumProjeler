@@ -1,89 +1,69 @@
-# click_map.yaml - Phase + Action -> Click Coordinates
-# ====================================================
-# Key format: "PHASE_NAME|action_name"
-# Structure must stay compatible with click_knowledge.py:
-#   coord: {x: ..., y: ...}
-#   label: ...
-#   source: yaml_auto
+# click_map.yaml — Alamet Faz + Aksiyon → Tıklama Koordinatı
+# ============================================================
+# Alamet modeli "mouse_click" kararı verdiğinde nereye tıklanacak?
 #
-# Coordinate source: config/GeminiProConfig.YAML (real UI coordinates)
+# Anahtar format: "FAZ_ADI|aksiyon_adi"
+# Faz isimleri: COMBAT_PHASE, EVENT_PHASE, LOOT_PHASE, NAV_PHASE,
+#               STARTUP_SYNC, SYSTEM_RECOVERY, UNKNOWN_PHASE
+#
+# coord: GeminiProConfig.yaml koordinatlarından alınmıştır.
+# source: "yaml_auto" = config'den türetildi, "yaml_manual" = elle girildi
+#
+# Bot çalışırken gözlemlenen tıklamalar models/active_model/click_knowledge.json'a
+# kaydedilir ve bu YAML'ın yerini alır (daha yüksek öncelik).
 
-# -- COMBAT_PHASE ------------------------------------------------------
-"COMBAT_PHASE|mouse_click":
-  coord: {x: 2298, y: 444}   # boss_list_ac
-  label: boss_list_ac
-  source: yaml_auto
-
-"COMBAT_PHASE|boss_list_ac":
-  coord: {x: 2298, y: 444}
-  label: boss_list_ac
-  source: yaml_auto
-
-"COMBAT_PHASE|kata_gec":
-  coord: {x: 1848, y: 1078}
+# ── COMBAT_PHASE ─────────────────────────────────────────────────────────
+# Savaş fazında mouse_click: genellikle kat geçiş butonu
+COMBAT_PHASE|mouse_click:
+  coord: {x: 1848, y: 1078}   # kata_gec butonu
   label: kata_gec
   source: yaml_auto
 
-# -- NAV_PHASE ---------------------------------------------------------
-"NAV_PHASE|mouse_click":
-  coord: {x: 1848, y: 1078}  # kata_gec
-  label: kata_gec
-  source: yaml_auto
-
-"NAV_PHASE|demoon_buton":
-  coord: {x: 1649, y: 106}
-  label: demoon_buton
-  source: yaml_auto
-
-"NAV_PHASE|boss_list_ac":
-  coord: {x: 2298, y: 444}
-  label: boss_list_ac
-  source: yaml_auto
-
-# -- EVENT_PHASE -------------------------------------------------------
-"EVENT_PHASE|mouse_click":
-  coord: {x: 1276, y: 108}   # ileri_tik
+# ── EVENT_PHASE ──────────────────────────────────────────────────────────
+# Etkinlik fazında mouse_click: ileri / devam butonu
+EVENT_PHASE|mouse_click:
+  coord: {x: 1276, y: 108}    # ileri_tik
   label: ileri_tik
   source: yaml_auto
 
-"EVENT_PHASE|ileri_tik":
-  coord: {x: 1276, y: 108}
+# ── LOOT_PHASE ───────────────────────────────────────────────────────────
+# Loot fazında mouse_click: ileri / kapat butonu
+LOOT_PHASE|mouse_click:
+  coord: {x: 1276, y: 108}    # ileri_tik
   label: ileri_tik
   source: yaml_auto
 
-"EVENT_PHASE|kapat":
-  coord: {x: 2237, y: 98}    # etkinlik_oku_close
-  label: etkinlik_oku_close
-  source: yaml_auto
-
-# -- LOOT_PHASE --------------------------------------------------------
-"LOOT_PHASE|mouse_click":
-  coord: {x: 1276, y: 108}   # ileri_tik
-  label: ileri_tik
-  source: yaml_auto
-
-"LOOT_PHASE|ileri_tik":
-  coord: {x: 1276, y: 108}
-  label: ileri_tik
-  source: yaml_auto
-
-"LOOT_PHASE|kapat":
-  coord: {x: 2237, y: 98}    # etkinlik_oku_close
-  label: etkinlik_oku_close
-  source: yaml_auto
-
-# -- STARTUP / RECOVERY / UNKNOWN -------------------------------------
-"STARTUP_SYNC|mouse_click":
-  coord: {x: 1278, y: 1035}  # common_event_point
+# ── NAV_PHASE ────────────────────────────────────────────────────────────
+# Navigasyon fazında mouse_click: genel etkinlik noktası
+NAV_PHASE|mouse_click:
+  coord: {x: 1278, y: 1035}   # common_event_point
   label: common_event_point
   source: yaml_auto
 
-"SYSTEM_RECOVERY|mouse_click":
-  coord: {x: 2237, y: 98}    # etkinlik_oku_close
-  label: etkinlik_oku_close
-  source: yaml_auto
+# ── STARTUP_SYNC ─────────────────────────────────────────────────────────
+# Başlangıç senkronizasyonu: ekran merkezi (fallback)
+STARTUP_SYNC|mouse_click:
+  coord: {x: 1280, y: 720}    # ekran ortası
+  label: screen_center
+  source: yaml_manual
 
-"UNKNOWN_PHASE|mouse_click":
-  coord: {x: 1278, y: 1035}  # common_event_point
-  label: common_event_point
-  source: yaml_auto
+# ── SYSTEM_RECOVERY ──────────────────────────────────────────────────────
+# Sistem kurtarma fazı: ekran merkezi (fallback)
+SYSTEM_RECOVERY|mouse_click:
+  coord: {x: 1280, y: 720}    # ekran ortası
+  label: screen_center
+  source: yaml_manual
+
+# ── UNKNOWN_PHASE ────────────────────────────────────────────────────────
+# Bilinmeyen faz: ekran merkezi (son çare)
+UNKNOWN_PHASE|mouse_click:
+  coord: {x: 1280, y: 720}    # ekran ortası
+  label: screen_center
+  source: yaml_manual
+
+# ── Ek Aksiyonlar (gelecek kullanım) ─────────────────────────────────────
+# Ollama veya başka bir model "mouse_click" dışında koordinat gerektirirse:
+# COMBAT_PHASE|seq_boss_secimi:
+#   coord: {x: 2298, y: 444}    # boss_list_ac
+#   label: boss_list_ac
+#   source: yaml_auto

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # modules/popup_manager.py
 import time
 from utils import log_to_file
@@ -22,7 +21,7 @@ class PopupManager:
 
         while True:
             # Bot duraklatılmışsa veya başka bir kritik aksiyon varsa bekle
-            if not self.bot.running.is_set() or self.bot.paused or self.bot.is_action_lock_busy():
+            if not self.bot.running.is_set() or self.bot.paused or self.bot.action_lock.locked():
                 time.sleep(5)
                 continue
 
