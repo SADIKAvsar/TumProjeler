@@ -264,7 +264,7 @@ class GUIManager:
             pass
 
     def create_gui(self):
-        self.root.title("LoA Bot v5.9 (Local-First)")
+        self.root.title("LoA Bot v6.0 (Local-First)")
         self.root.configure(bg="black")
         self.root.wm_attributes("-topmost", True)
         # Yükseklik içerikten sonra otomatik hesaplanacak.

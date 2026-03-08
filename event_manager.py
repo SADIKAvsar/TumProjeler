@@ -201,6 +201,8 @@ class EventManager:
             extra={"event_flag": "Event_Start", "event_name": event["name"]},
         )
         self.bot.active_event = event
+        # Event akisi baslarken stale KATMAN bilgisini temizle.
+        self.bot.location_manager.set_current_location_by_name("UNKNOWN")
         action_success = False
         try:
             lock_timeout = float(self.bot.settings.get("EVENT_ACTION_LOCK_TIMEOUT_SN", 0.5))
@@ -253,6 +255,8 @@ class EventManager:
                         self.bot.reward_engine.on_event_entry(event_name=event["name"], success=True)
                 else:
                     self.bot.log(f"'{event['name']}' giris basarisiz.")
+                    # Giris yari basarili olmus olabilir; anchor bazli konumu zorla tazele.
+                    self.bot.location_manager.update_visual_location()
                     self.bot.log_training_outcome(
                         "event_entry",
                         {"event_name": event["name"], "success": False},

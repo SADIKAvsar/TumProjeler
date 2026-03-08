@@ -387,6 +387,18 @@ class BossManager:
         ]
         return self.bot._run_sequence(seq, self.bot.coordinates, context_target=target)
 
+    def _refresh_interrupted_spawn(self, target) -> None:
+        """
+        Dovus tam baslayamadan kesilen akislarda spawn_time'in stale kalmasini onler.
+        """
+        combat = getattr(self.bot, "combat", None)
+        if combat is None or not hasattr(combat, "recalculate_times_interrupted"):
+            return
+        try:
+            combat.recalculate_times_interrupted(target)
+        except Exception as exc:
+            self.bot.log(f"[INTERRUPT] Spawn refresh hatasi: {exc}", level="WARNING")
+
     def execute_precise_boss_flow(self, target, ui_protocol: str = None) -> bool:
         """
         Esnek zaman pencereli hassas akis:
@@ -404,6 +416,7 @@ class BossManager:
 
         protocol_name = str(ui_protocol or "").strip().upper() or self._derive_safe_protocol(target)
         if not self._wait_for_navigation_window(target, protocol_name):
+            self._refresh_interrupted_spawn(target)
             return False
 
         self.bot.log(
@@ -438,6 +451,7 @@ class BossManager:
             )
             if hasattr(self.bot, "reward_engine"):
                 self.bot.reward_engine.on_death(boss_name=str(target.get("aciklama", "")))
+            self._refresh_interrupted_spawn(target)
             return False
 
         self.bot.automator.press_key("z")
@@ -919,6 +933,8 @@ class BossManager:
 
             except Exception as exc:
                 self.bot.log(f"BossManager hatasi: {exc}")
+                if "target" in locals() and isinstance(target, dict):
+                    self._refresh_interrupted_spawn(target)
                 # ★ FIX: Hata durumunda da tüm state'i temizle
                 self._reset_combat_state(reason=f"exception_{type(exc).__name__}")
                 if hasattr(self.bot, "auto_stop_recording"):
