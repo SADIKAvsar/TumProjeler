@@ -1,16 +1,17 @@
+﻿# -*- coding: utf-8 -*-
 """
-train_agentic.py — LoABot v5.9 Agentic YZ Eğitim Script'i (v2.0 — Temporal)
+train_agentic.py - LoABot v5.9 Agentic YZ Egitim Script'i (v2.0 - Temporal)
 ==============================================================================
 Eski statik JPEG pipeline tamamen kaldırıldı.
 Yeni video tabanlı pipeline (video_dataset_builder.py) kullanılır.
 
 Mimari: Stacked 2D CNN
-  - T-1, T, T+1 frame'leri kanal boyutunda birleştirilir → (B, 9, H, W)
-  - ResNet18 veya EfficientNet-B0 backbone (ilk conv: 3ch → 9ch modifiye)
-  - Regression Head: Sigmoid → (B, 2) normalize koordinat [0, 1]
-  - Loss: MSELoss — sadece mouse_click event'lerinde hesaplanır
+  - T-1, T, T+1 frame'leri kanal boyutunda birlestirilir -> (B, 9, H, W)
+  - ResNet18 veya EfficientNet-B0 backbone (ilk conv: 3ch -> 9ch modifiye)
+  - Regression Head: Sigmoid -> (B, 2) normalize koordinat [0, 1]
+  - Loss: MSELoss - sadece mouse_click event'lerinde hesaplanır
 
-Çıktılar:
+Ciktilar:
   - best.pt / last.pt checkpoint'ları
   - metrics.csv (epoch bazlı)
   - TensorBoard logları
@@ -45,17 +46,16 @@ try:
     HAS_TORCHVISION = True
 except Exception:
     HAS_TORCHVISION = False
-
-# ── Video dataset pipeline ────────────────────────────────────────────
+# ----------------------------------------------------------------------
 from video_dataset_builder import build_dataloaders
 
 
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 #  YARDIMCI FONKSİYONLAR
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 
 def create_summary_writer(log_dir: Path):
-    """TensorBoard SummaryWriter oluşturma (import hatalarını yakalar)."""
+    """TensorBoard SummaryWriter olusturma (import hatalarını yakalar)."""
     try:
         from torch.utils.tensorboard import SummaryWriter as TBSummaryWriter
         return TBSummaryWriter(log_dir=str(log_dir)), True
@@ -83,15 +83,19 @@ def append_csv(path: Path, row: Dict):
 
 
 def auto_num_workers() -> int:
-    """CPU çekirdeğine göre optimal worker sayısı."""
+    """CPU cekirdegine göre optimal worker sayısı."""
     c = int(os.cpu_count() or 1)
+    # Windows + decord tarafinda yüksek worker sayisi ffmpeg/decode OOM'a daha kolay
+    # gidebildigi icin konservatif seciyoruz.
+    if os.name == "nt":
+        return 1
     return max(2, min(16, c - 2))
 
 
 def auto_batch_size(device: torch.device, backbone: str) -> int:
     """VRAM'e göre güvenli batch_size tahmini (9ch = ~3x bellek)."""
     if device.type != "cuda":
-        return 8  # CPU: 9ch temporal daha ağır
+        return 8  # CPU: 9ch temporal daha agir
     vram_gb = torch.cuda.get_device_properties(device).total_memory / (1024**3)
     b = str(backbone).lower()
     # 9 kanallı girdi normal 3ch'ye göre ~2-3x daha fazla bellek kullanır
@@ -101,20 +105,20 @@ def auto_batch_size(device: torch.device, backbone: str) -> int:
         if vram_gb >= 11.0:
             return 32
         return 16
-    # resnet18 — daha hafif
+    # resnet18 - daha hafif
     if vram_gb >= 15.0:
-        return 64
+        return 24
     if vram_gb >= 11.0:
-        return 48
-    return 24
+        return 20
+    return 16
 
 
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 #  TINY BACKBONE (torchvision yoksa fallback)
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 
 class TinyBackbone(nn.Module):
-    """Hafif CNN backbone — torchvision kurulu olmadığında fallback."""
+    """Hafif CNN backbone - torchvision kurulu olmadıYında fallback."""
     def __init__(self, in_channels: int = 9, out_dim: int = 256):
         super().__init__()
         self.features = nn.Sequential(
@@ -138,19 +142,19 @@ class TinyBackbone(nn.Module):
         return self.proj(x)
 
 
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 #  TEMPORAL AGENTIC NET
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 
 class TemporalAgenticNet(nn.Module):
     """
-    Temporal Stacked 2D CNN — Koordinat Regresyon Modeli.
+    Temporal Stacked 2D CNN - Koordinat Regresyon Modeli.
 
-    Girdi : (B, 9, H, W)  — T-1, T, T+1 frame'leri kanal birleşik
-    Çıktı : (B, 2)        — sigmoid normalize (x, y) koordinatları [0, 1]
+    Girdi : (B, 9, H, W)  - T-1, T, T+1 frame'leri kanal birlesik
+    ?ıktı : (B, 2)        - sigmoid normalize (x, y) koordinatları [0, 1]
 
-    İlk conv katmanı 3ch → 9ch olarak genişletilir:
-      - Pretrained ise: orijinal 3ch ağırlıkları 3 kez kopyalanır / 3'e bölünür
+    İlk conv katmanı 3ch -> 9ch olarak genisletilir:
+      - Pretrained ise: orijinal 3ch agirlıkları 3 kez kopyalanır / 3'e bölünür
       - Scratch ise: Kaiming init
     """
 
@@ -165,48 +169,45 @@ class TemporalAgenticNet(nn.Module):
         self.backbone, feat_dim = self._build_backbone(backbone, pretrained)
         self.dropout = nn.Dropout(float(dropout))
 
-        # Koordinat regresyon kafası: (B, feat_dim) → (B, 2)
+        # Koordinat regresyon kafası: (B, feat_dim) -> (B, 2)
         self.coord_head = nn.Sequential(
             nn.Linear(feat_dim, 256),
             nn.ReLU(inplace=True),
             nn.Dropout(0.2),
             nn.Linear(256, 2),
-            nn.Sigmoid(),  # çıktı [0, 1] aralığında — normalize koordinat
+            nn.Sigmoid(),  # çıktı [0, 1] aralıYında - normalize koordinat
         )
 
     def _build_backbone(self, backbone: str, pretrained: bool):
-        """Backbone oluştur, ilk conv'u 9 kanal yapacak şekilde modifiye et."""
+        """Backbone olustur, ilk conv'u 9 kanal yapacak Yekilde modifiye et."""
         b = str(backbone).strip().lower()
-
-        # ── ResNet18 ──────────────────────────────────────────────
+# ----------------------------------------------------------------------
         if HAS_TORCHVISION and b == "resnet18":
             weights = ResNet18_Weights.DEFAULT if pretrained else None
             model = resnet18(weights=weights)
             feat_dim = model.fc.in_features
 
-            # İlk conv: 3ch → 9ch genişlet
+            # İlk conv: 3ch -> 9ch genislet
             old_conv = model.conv1  # Conv2d(3, 64, 7, stride=2, padding=3)
             model.conv1 = self._expand_first_conv(old_conv, 9, pretrained)
 
             # Classifier kafasını kaldır (backbone sadece feature extractor)
             model.fc = nn.Identity()
             return model, feat_dim
-
-        # ── EfficientNet-B0 ──────────────────────────────────────
+# ----------------------------------------------------------------------
         if HAS_TORCHVISION and b == "efficientnet_b0":
             weights = EfficientNet_B0_Weights.DEFAULT if pretrained else None
             model = efficientnet_b0(weights=weights)
             feat_dim = model.classifier[1].in_features
 
-            # İlk conv: features[0][0] → Conv2d(3, 32, 3, stride=2, padding=1)
+            # İlk conv: features[0][0] -> Conv2d(3, 32, 3, stride=2, padding=1)
             old_conv = model.features[0][0]
             model.features[0][0] = self._expand_first_conv(old_conv, 9, pretrained)
 
             # Classifier kafasını kaldır
             model.classifier = nn.Identity()
             return model, feat_dim
-
-        # ── Tiny Fallback ────────────────────────────────────────
+# ----------------------------------------------------------------------
         tiny = TinyBackbone(in_channels=9, out_dim=256)
         return tiny, tiny.out_dim
 
@@ -217,10 +218,10 @@ class TemporalAgenticNet(nn.Module):
         copy_weights: bool,
     ) -> nn.Conv2d:
         """
-        Mevcut Conv2d'yi new_in_channels kabul edecek şekilde genişletir.
+        Mevcut Conv2d'yi new_in_channels kabul edecek Yekilde genisletir.
 
-        Pretrained ağırlık aktarımı:
-          - Orijinal (out, 3, kH, kW) → (out, 9, kH, kW)
+        Pretrained agirlık aktarımı:
+          - Orijinal (out, 3, kH, kW) -> (out, 9, kH, kW)
           - 3 kopya / 3.0'a bölerek ortalama korunur (Xavier benzeri)
         """
         new_conv = nn.Conv2d(
@@ -237,9 +238,9 @@ class TemporalAgenticNet(nn.Module):
 
         if copy_weights and old_conv.weight is not None:
             with torch.no_grad():
-                # Orijinal ağırlık: (out_ch, 3, kH, kW)
+                # Orijinal agirlık: (out_ch, 3, kH, kW)
                 old_w = old_conv.weight.data
-                # 3 kez tekrarla → (out_ch, 9, kH, kW), ortalaması korunsun
+                # 3 kez tekrarla -> (out_ch, 9, kH, kW), ortalaması korunsun
                 repeat_count = new_in_channels // old_w.shape[1]
                 remainder = new_in_channels % old_w.shape[1]
 
@@ -253,7 +254,7 @@ class TemporalAgenticNet(nn.Module):
                 if old_conv.bias is not None and new_conv.bias is not None:
                     new_conv.bias.data.copy_(old_conv.bias.data)
         else:
-            # Kaiming init (scratch eğitim)
+            # Kaiming init (scratch egitim)
             nn.init.kaiming_normal_(new_conv.weight, mode="fan_out", nonlinearity="relu")
 
         return new_conv
@@ -261,9 +262,9 @@ class TemporalAgenticNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: (B, 9, H, W) — birleştirilmiş temporal frame'ler
+            x: (B, 9, H, W) - birlestirilmis temporal frame'ler
         Returns:
-            coords: (B, 2) — sigmoid normalize [0, 1] koordinatlar
+            coords: (B, 2) - sigmoid normalize [0, 1] koordinatlar
         """
         feat = self.backbone(x)
         feat = self.dropout(feat)
@@ -271,9 +272,9 @@ class TemporalAgenticNet(nn.Module):
         return coords
 
 
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 #  METRİK HESAPLAMA
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 
 def compute_mean_euclidean_distance(
     pred_coords: torch.Tensor,
@@ -281,43 +282,43 @@ def compute_mean_euclidean_distance(
     mask: torch.Tensor,
 ) -> float:
     """
-    Masked örnekler üzerinden ortalama Öklid mesafesi hesaplar.
+    Masked örnekler üzerinden ortalama -klid mesafesi hesaplar.
 
     Args:
         pred_coords: (N, 2) model çıktısı [0, 1]
         target_coords: (N, 2) gerçek koordinatlar [0, 1]
-        mask: (N,) bool — True olan indeksler dahil edilir
+        mask: (N,) bool - True olan indeksler dahil edilir
 
     Returns:
-        Ortalama mesafe (float). Mask boşsa 0.0.
+        Ortalama mesafe (float). Mask bossa 0.0.
     """
     if not mask.any():
         return 0.0
     p = pred_coords[mask]
     t = target_coords[mask]
-    # Öklid mesafesi: sqrt((x1-x2)^2 + (y1-y2)^2)
+    # -klid mesafesi: sqrt((x1-x2)^2 + (y1-y2)^2)
     dist = torch.sqrt(((p - t) ** 2).sum(dim=1) + 1e-8)
     return float(dist.mean().item())
 
 
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 #  BATCH İŞLEME
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 
 def prepare_batch(batch: Dict, device: torch.device):
     """
-    DataLoader batch'ini eğitim döngüsü için hazırlar.
+    DataLoader batch'ini egitim döngüsü için hazırlar.
 
     Döndürür:
-        stacked: (B, 9, H, W) — birleştirilmiş frame'ler
-        coords:  (B, 2) — normalize koordinatlar
-        click_mask: (B,) — sadece mouse_click event'leri True
+        stacked: (B, 9, H, W) - birlestirilmis frame'ler
+        coords:  (B, 2) - normalize koordinatlar
+        click_mask: (B,) - sadece mouse_click event'leri True
     """
     f_before = batch["frame_before"]   # (B, 3, H, W)
     f_action = batch["frame_action"]   # (B, 3, H, W)
     f_after = batch["frame_after"]     # (B, 3, H, W)
 
-    # Kanal boyutunda birleştir: (B, 9, H, W)
+    # Kanal boyutunda birlestir: (B, 9, H, W)
     stacked = torch.cat([f_before, f_action, f_after], dim=1)
     stacked = stacked.to(device, non_blocking=True)
 
@@ -334,9 +335,9 @@ def prepare_batch(batch: Dict, device: torch.device):
     return stacked, coords, click_mask
 
 
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 #  EĞİTİM ADIMI
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 
 def train_one_epoch(
     model: nn.Module,
@@ -348,13 +349,13 @@ def train_one_epoch(
     amp_enabled: bool,
 ) -> Dict[str, float]:
     """
-    Tek epoch eğitim.
+    Tek epoch egitim.
 
     Returns:
         {
             "mse_loss": float,
-            "mean_dist": float,  — Öklid mesafesi (sadece click örnekleri)
-            "click_ratio": float — batch'lerdeki click oranı
+            "mean_dist": float,  - -klid mesafesi (sadece click örnekleri)
+            "click_ratio": float - batch'lerdeki click oranı
         }
     """
     model.train()
@@ -376,7 +377,7 @@ def train_one_epoch(
             if click_mask.any():
                 loss = loss_fn(pred_coords[click_mask], coords_gt[click_mask])
             else:
-                # Batch'te hiç click yoksa → küçük dummy loss (gradient akışı korunsun)
+                # Batch'te hiç click yoksa -> küçük dummy loss (gradient akisi korunsun)
                 loss = loss_fn(pred_coords[:1], pred_coords[:1].detach()) * 0.0
 
         scaler.scale(loss).backward()
@@ -403,9 +404,9 @@ def train_one_epoch(
     }
 
 
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 #  VALİDASYON
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 
 @torch.no_grad()
 def evaluate(
@@ -416,7 +417,7 @@ def evaluate(
     amp_enabled: bool,
 ) -> Dict[str, float]:
     """
-    Validasyon/test değerlendirmesi.
+    Validasyon/test degerlendirmesi.
 
     Returns:
         {
@@ -461,16 +462,15 @@ def evaluate(
     }
 
 
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 #  ANA EĞİTİM FONKSİYONU
-# ══════════════════════════════════════════════════════════════════════
+# ......................................................................
 
 def main():
     parser = argparse.ArgumentParser(
-        description="LoABot v5.9 Agentic Trainer — Temporal Video Pipeline"
+        description="LoABot v5.9 Agentic Trainer - Temporal Video Pipeline"
     )
-
-    # ── Veri ──────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
     parser.add_argument(
         "--video-root",
         default=r"D:\LoABot_Training_Data\videos",
@@ -479,17 +479,10 @@ def main():
     parser.add_argument(
         "--log-root",
         default=r"D:\LoABot_Training_Data\runtime_data\training_logs",
-        help="Eğitim çıktı dizini (checkpoint, log, TB).",
-    )
-    parser.add_argument(
-        "--weights",
-        type=str,
-        default="",
-        help="Fine-tuning icin egitilmis .pt checkpoint yolu",
+        help="Egitim çıktı dizini (checkpoint, log, TB).",
     )
     parser.add_argument("--train-ratio", type=float, default=0.8)
-
-    # ── Model ─────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
     parser.add_argument(
         "--backbone",
         default="resnet18",
@@ -497,8 +490,13 @@ def main():
     )
     parser.add_argument("--no-pretrained", action="store_true")
     parser.add_argument("--dropout", type=float, default=0.3)
-
-    # ── Eğitim hiperparametreleri ─────────────────────────────────
+    parser.add_argument(
+        "--weights",
+        type=str,
+        default="",
+        help="Fine-tuning icin egitilmis .pt checkpoint yolu",
+    )
+# ----------------------------------------------------------------------
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
@@ -512,27 +510,24 @@ def main():
     )
     parser.add_argument(
         "--batch-size", type=int, default=0,
-        help="0 → otomatik (VRAM'e göre).",
+        help="0 -> otomatik (VRAM'e göre).",
     )
     parser.add_argument(
         "--num-workers", type=int, default=-1,
-        help="-1 → otomatik (CPU çekirdeğine göre).",
+        help="-1 -> otomatik (CPU cekirdegine göre).",
     )
     parser.add_argument("--seed", type=int, default=42)
-
-    # ── Early stopping ────────────────────────────────────────────
+# ----------------------------------------------------------------------
     parser.add_argument("--early-stop-patience", type=int, default=8)
     parser.add_argument("--early-stop-min-delta", type=float, default=1e-5)
     parser.add_argument("--disable-early-stop", action="store_true")
-
-    # ── Loglama ───────────────────────────────────────────────────
+# ----------------------------------------------------------------------
     parser.add_argument("--no-tensorboard", action="store_true")
 
     args = parser.parse_args()
-
-    # ──────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
     #  SETUP
-    # ──────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
     seed_everything(args.seed)
     torch.backends.cudnn.benchmark = True
@@ -544,7 +539,7 @@ def main():
         _dev0 = torch.cuda.get_device_properties(0)
         print(f"GPU: {_dev0.name} | VRAM: {_dev0.total_memory / 1024**3:.1f} GB")
     else:
-        print("UYARI: CUDA bulunamadi — egitim CPU uzerinde calisacak (cok yavas).")
+        print("UYARI: CUDA bulunamadi - egitim CPU uzerinde calisacak (cok yavas).")
         print("  Cozum: pip install torch torchvision --extra-index-url https://download.pytorch.org/whl/cu124")
 
     device = torch.device("cuda" if cuda_ok else "cpu")
@@ -564,16 +559,15 @@ def main():
     if device.type != "cuda":
         _cpu_max_batch = 8
         if batch_size > _cpu_max_batch:
-            print(f"UYARI: CPU modunda batch_size={batch_size} → {_cpu_max_batch} olarak düşürüldü.")
+            print(f"UYARI: CPU modunda batch_size={batch_size} -> {_cpu_max_batch} olarak dusuruldu.")
             batch_size = _cpu_max_batch
         _cpu_max_workers = max(2, (os.cpu_count() or 4) // 2)
         if num_workers > _cpu_max_workers:
-            print(f"UYARI: CPU modunda num_workers → {_cpu_max_workers} olarak ayarlandi.")
+            print(f"UYARI: CPU modunda num_workers -> {_cpu_max_workers} olarak ayarlandi.")
             num_workers = _cpu_max_workers
-
-    # ──────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
     #  DATA LOADER (video_dataset_builder entegrasyonu)
-    # ──────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
     image_size = int(args.image_size)
     resize = (image_size, image_size)
@@ -588,24 +582,25 @@ def main():
         num_workers=num_workers,
         resize=resize,
         seed=args.seed,
+        max_open_readers=max(1, min(2, num_workers if num_workers > 0 else 1)),
     )
 
-    # Boş dataset kontrolü
+    # Bos dataset kontrolü
     train_len = len(train_loader.dataset)
     test_len = len(test_loader.dataset)
     if train_len == 0:
         raise SystemExit("HATA: Train dataset bos. Video dosyalarini kontrol edin.")
     print(f"  Train: {train_len} örnek | Test: {test_len} örnek\n")
-
-    # ──────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
     #  MODEL
-    # ──────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
     model = TemporalAgenticNet(
         backbone=args.backbone,
         pretrained=(not args.no_pretrained),
         dropout=args.dropout,
     ).to(device)
+
     if args.weights and os.path.isfile(args.weights):
         ckpt = torch.load(args.weights, map_location=device)
         model.load_state_dict(ckpt["model_state_dict"])
@@ -616,11 +611,10 @@ def main():
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model: TemporalAgenticNet ({args.backbone})")
     print(f"  Toplam parametre : {total_params:,}")
-    print(f"  Eğitilebilir     : {trainable_params:,}")
-
-    # ──────────────────────────────────────────────────────────────
+    print(f"  Egitilebilir     : {trainable_params:,}")
+# ----------------------------------------------------------------------
     #  LOSS & OPTİMİZER
-    # ──────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
     # Loss fonksiyonu seçimi
     loss_name = str(args.loss_fn).lower()
@@ -643,16 +637,15 @@ def main():
     )
     scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
     amp_enabled = device.type == "cuda"
-
-    # ──────────────────────────────────────────────────────────────
-    #  ÇIKTI DİZİNİ
-    # ──────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
+    #  ?IKTI DİZİNİ
+# ----------------------------------------------------------------------
 
     run_root = Path(args.log_root)
     run_dir = run_root / datetime.now().strftime("run_%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Eğitim konfigürasyonu kaydet
+    # Egitim konfigürasyonu kaydet
     train_config = {
         "video_root": str(args.video_root),
         "device": str(device),
@@ -693,12 +686,11 @@ def main():
         tb_writer, tb_ok = create_summary_writer(tb_dir)
         if not tb_ok:
             print("UYARI: TensorBoard import edilemedi.")
-
-    # ──────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
     #  EARLY STOPPING STATE
-    # ──────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
-    best_metric = float("inf")   # loss minimize edilir → küçük = iyi
+    best_metric = float("inf")   # loss minimize edilir -> küçük = iyi
     best_epoch = 0
     early_stopped = False
     stopped_epoch = args.epochs
@@ -711,15 +703,13 @@ def main():
     print(f"Epochs: {args.epochs} | LR: {args.lr} | Early stop: {early_stop_enabled} (patience={patience})")
     print(f"Run dir: {run_dir}\n")
     print("=" * 100)
-
-    # ──────────────────────────────────────────────────────────────
-    #  EĞİTİM DÖNGÜSÜ
-    # ──────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
+    #  EĞİTİM D-NGoSo
+# ----------------------------------------------------------------------
 
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
-
-        # ── Train ─────────────────────────────────────────────────
+# ----------------------------------------------------------------------
         train_metrics = train_one_epoch(
             model=model,
             loader=train_loader,
@@ -731,8 +721,7 @@ def main():
         )
 
         scheduler.step()
-
-        # ── Validation ────────────────────────────────────────────
+# ----------------------------------------------------------------------
         val_metrics = evaluate(
             model=model,
             loader=test_loader,
@@ -742,8 +731,7 @@ def main():
         )
 
         epoch_time = time.time() - t0
-
-        # ── Metrik kaydı ──────────────────────────────────────────
+# ----------------------------------------------------------------------
         row = {
             "epoch": epoch,
             "lr": round(optimizer.param_groups[0]["lr"], 8),
@@ -756,8 +744,7 @@ def main():
             "epoch_sec": round(epoch_time, 2),
         }
         append_csv(csv_path, row)
-
-        # ── TensorBoard ──────────────────────────────────────────
+# ----------------------------------------------------------------------
         if tb_writer is not None:
             tb_writer.add_scalar("Loss/train_mse", train_metrics["mse_loss"], epoch)
             tb_writer.add_scalar("Loss/val_mse", val_metrics["mse_loss"], epoch)
@@ -767,8 +754,7 @@ def main():
             tb_writer.add_scalar("Data/val_click_ratio", val_metrics["click_ratio"], epoch)
             tb_writer.add_scalar("LR/current", optimizer.param_groups[0]["lr"], epoch)
             tb_writer.flush()
-
-        # ── Checkpoint kaydet ─────────────────────────────────────
+# ----------------------------------------------------------------------
         ckpt = {
             "epoch": epoch,
             "model_state_dict": model.state_dict(),
@@ -789,12 +775,11 @@ def main():
             best_epoch = epoch
             no_improve_epochs = 0
             torch.save(ckpt, run_dir / "best.pt")
-            marker = " ★ best"
+            marker = " * best"
         else:
             no_improve_epochs += 1
             marker = ""
-
-        # ── Konsol çıktısı ────────────────────────────────────────
+# ----------------------------------------------------------------------
         print(
             f"[{epoch:03d}/{args.epochs}] "
             f"train_loss={row['train_mse_loss']:.5f} "
@@ -805,8 +790,7 @@ def main():
             f"time={row['epoch_sec']:.1f}s"
             f"{marker}"
         )
-
-        # ── Early stopping kontrolü ──────────────────────────────
+# ----------------------------------------------------------------------
         if early_stop_enabled and no_improve_epochs >= patience:
             early_stopped = True
             stopped_epoch = epoch
@@ -815,10 +799,9 @@ def main():
                 f"(patience={patience}, min_delta={min_delta})."
             )
             break
-
-    # ──────────────────────────────────────────────────────────────
-    #  SONUÇ ÖZETİ
-    # ──────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
+    #  SONU? -ZETİ
+# ----------------------------------------------------------------------
 
     print("=" * 100)
 
@@ -851,3 +834,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+

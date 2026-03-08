@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 user_input_monitor.py — Merkezi Global Input Manager (v2.0)
 ===========================================================
@@ -46,6 +47,7 @@ BOT_IS_PRESSING_KEY_EVENT = threading.Event()
 
 # Agentic eğitim için izlenen tuşlar
 _TRACKED_KEYS = frozenset({"a", "q", "v", "z"})
+_ACTIVE_PHASES = frozenset({"NAV_PHASE", "COMBAT_PHASE", "LOOT_PHASE", "EVENT_PHASE"})
 
 # Debounce süresi (ms)
 _DEBOUNCE_MS: float = 100.0
@@ -93,6 +95,7 @@ class UserInputMonitor:
         # Debounce
         self._last_key_ts: float = 0.0
         self._last_click_ts: float = 0.0
+        self._last_bot_input_ts: float = time.monotonic()
 
         # Subscriber registry — {name: callback}
         self._subscribers: Dict[str, InputCallback] = {}
@@ -175,40 +178,56 @@ class UserInputMonitor:
     # ── Broadcast ─────────────────────────────────────────────────
 
 
-    def _should_log_user_input(self) -> bool:
+    def _evaluate_user_intervention(self, now: float, phase: str) -> tuple[bool, str, float]:
         """
-        Kullanıcı inputlarının log dosyasına yazılıp yazılmayacağını belirler.
+        Kullanıcı inputunun eğitim için "müdahale" sayılıp sayılmayacağını belirler.
 
         Kurallar:
-          - Aktif bir aksiyon döngüsündeyse (boss saldırısı, event, navigasyon)
-            → True  (her input eğitim verisi olarak değerlidir)
-          - EXP_FARM'da boşta bekliyorsa (IDLE + hedef yok + event yok)
-            → False (log şişmesini önle)
+          - Bot aktif bir görevde olmalı (faz/hedef/event).
+          - Botta problem sinyali olmalı:
+              a) freeze tespit edilmişse
+              b) son bot inputundan beri belirli süre geçtiyse (idle)
+          - Aksi durumda kullanıcı inputu eğitim verisi olarak alınmaz.
 
-        NOT: Bu sadece bot.log() ve log_training_action() çağrılarını kontrol eder.
-        _broadcast() her zaman çalışır — subscriber'lar (VideoRecorder vb.)
-        olayları almaya devam eder.
+        Dönen değer:
+          (is_intervention, reason, idle_since_bot_input_s)
         """
-        # 1. Aktif saldırı hedefi varsa → logla
-        if getattr(self.bot, "attacking_target_aciklama", None):
-            return True
+        normalized_phase = str(phase or "").strip().upper()
 
-        # 2. Aktif event varsa → logla
-        if getattr(self.bot, "active_event", None):
-            return True
+        # Bot durdu/paused ise öğrenme sinyali üretme.
+        running_evt = getattr(self.bot, "running", None)
+        if running_evt is not None and not running_evt.is_set():
+            return False, "bot_not_running", 0.0
+        if bool(getattr(self.bot, "paused", False)):
+            return False, "bot_paused", 0.0
 
-        # 3. _global_phase aktif bir fazda mı?
-        phase = str(getattr(self.bot, "_global_phase", "")).strip().upper()
-        if phase in {"NAV_PHASE", "COMBAT_PHASE", "LOOT_PHASE", "EVENT_PHASE"}:
-            return True
-
-        # 4. Video kayıt aktifse → logla (eğitim verisi toplanıyor)
+        # Sadece aktif kayıt sırasında kullanıcı müdahalesi topla.
         vid = getattr(self.bot, "video_recorder", None)
-        if vid is not None and getattr(vid, "is_recording", False):
-            return True
+        if vid is None or not bool(getattr(vid, "is_recording", False)):
+            return False, "recording_off", 0.0
 
-        # Hiçbir koşul sağlanmadı → EXP_FARM boşta → sustur
-        return False
+        # Aktif görev bağlamı zorunlu.
+        in_active_context = bool(getattr(self.bot, "attacking_target_aciklama", None))
+        if not in_active_context:
+            in_active_context = bool(getattr(self.bot, "active_event", None))
+        if not in_active_context and normalized_phase in _ACTIVE_PHASES:
+            in_active_context = True
+        if not in_active_context:
+            return False, "idle_context", 0.0
+
+        # Freeze sinyali varsa doğrudan müdahale kabul et.
+        gm = getattr(self.bot, "game_manager", None)
+        freeze_count = int(getattr(gm, "_freeze_count", 0) or 0)
+        if freeze_count > 0:
+            return True, f"freeze_count={freeze_count}", 0.0
+
+        # Bot bir süredir input üretmiyorsa (takılma olasılığı) müdahale kabul et.
+        idle_threshold = float(self.bot.settings.get("USER_INTERVENTION_IDLE_SN", 2.5))
+        idle_since_bot = max(0.0, float(now) - float(self._last_bot_input_ts))
+        if idle_since_bot >= max(0.2, idle_threshold):
+            return True, f"bot_idle_{idle_since_bot:.2f}s", idle_since_bot
+
+        return False, "bot_active", idle_since_bot
 
     def _broadcast(self, event: InputEvent) -> None:
         """Olayı tüm subscriber'lara dağıt (hata izolasyonu ile)."""
@@ -247,30 +266,45 @@ class UserInputMonitor:
 
                 source = "bot" if is_bot else "user"
                 phase = getattr(self.bot, "_global_phase", "UNKNOWN_PHASE")
+                event_data = {"key": key_char}
+
+                if source == "bot":
+                    with self._lock:
+                        self._last_bot_input_ts = now
+                else:
+                    is_intervention, reason, idle_s = self._evaluate_user_intervention(now, phase)
+                    event_data["is_intervention"] = bool(is_intervention)
+                    if is_intervention:
+                        event_data["intervention_reason"] = reason
+                        event_data["bot_idle_s"] = round(float(idle_s), 3)
 
                 event = InputEvent(
                     source=source,
                     event_type="key_press",
-                    data={"key": key_char},
+                    data=event_data,
                     ts_mono=now,
                     phase=phase,
                 )
 
                 # Kullanıcı olaylarını TrainingLogger'a bildir
-                # ★ FIX: EXP_FARM boşta iken loglamayı sustur (log şişmesi önlenir)
-                if source == "user" and self._should_log_user_input():
+                # Sadece "müdahale" kabul edilen kullanıcı inputları loglanır.
+                if source == "user" and bool(event_data.get("is_intervention", False)):
                     action_label = (
                         f"key_{key_char}" if key_char in _TRACKED_KEYS
                         else f"user_key_{key_char}"
                     )
                     self.bot.log(
-                        f"[InputHub] Kullanici tusu: {key_char} -> {action_label}",
+                        f"[InputHub] Kullanici mudahalesi (tus): {key_char} -> {action_label} "
+                        f"| neden={event_data.get('intervention_reason')}",
                         level="DEBUG",
                     )
                     self.bot.log_training_action(
                         "user_key_press",
                         {"key": key_char, "action_label": action_label,
-                         "phase": phase, "source": "manual_user"},
+                         "phase": phase, "source": "manual_user",
+                         "is_intervention": True,
+                         "intervention_reason": event_data.get("intervention_reason", ""),
+                         "bot_idle_s": event_data.get("bot_idle_s", 0.0)},
                     )
 
                 # Tüm subscriber'lara (VideoRecorder vb.) dağıt
@@ -320,23 +354,41 @@ class UserInputMonitor:
 
                 source = "bot" if is_bot else "user"
                 phase = getattr(self.bot, "_global_phase", "UNKNOWN_PHASE")
+                event_data = {"x": int(x), "y": int(y), "button": btn_name}
+
+                if source == "bot":
+                    with self._lock:
+                        self._last_bot_input_ts = now
+                else:
+                    is_intervention, reason, idle_s = self._evaluate_user_intervention(now, phase)
+                    event_data["is_intervention"] = bool(is_intervention)
+                    if is_intervention:
+                        event_data["intervention_reason"] = reason
+                        event_data["bot_idle_s"] = round(float(idle_s), 3)
 
                 event = InputEvent(
                     source=source,
                     event_type="mouse_click",
-                    data={"x": int(x), "y": int(y), "button": btn_name},
+                    data=event_data,
                     ts_mono=now,
                     phase=phase,
                 )
 
                 # Kullanıcı tıklamalarını TrainingLogger'a bildir
-                # ★ FIX: EXP_FARM boşta iken loglamayı sustur (log şişmesi önlenir)
-                if source == "user" and self._should_log_user_input():
-                    self.bot.log(f"[InputHub] Kullanici tik: ({x},{y})", level="DEBUG")
+                # Sadece "müdahale" kabul edilen kullanıcı inputları loglanır.
+                if source == "user" and bool(event_data.get("is_intervention", False)):
+                    self.bot.log(
+                        f"[InputHub] Kullanici mudahalesi (tik): ({x},{y}) "
+                        f"| neden={event_data.get('intervention_reason')}",
+                        level="DEBUG",
+                    )
                     self.bot.log_training_action(
                         "user_mouse_click",
                         {"x": int(x), "y": int(y), "phase": phase,
-                         "source": "manual_user"},
+                         "source": "manual_user",
+                         "is_intervention": True,
+                         "intervention_reason": event_data.get("intervention_reason", ""),
+                         "bot_idle_s": event_data.get("bot_idle_s", 0.0)},
                     )
 
                 # Tüm subscriber'lara dağıt

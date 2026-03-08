@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 sequential_recorder.py
 
@@ -39,8 +40,8 @@ DEFAULT_RAM_FRAME_LIMIT: int = 600
 # Actions expected to move character position.
 _WALK_ACTIONS: frozenset[str] = frozenset({
     "mouse_click",
-    "seq_boss_secimi",
     "seq_katman_secimi",
+    "seq_boss_secimi",
 })
 
 
@@ -209,35 +210,10 @@ class SequentialRecorder:
 
         with self._buffer_lock:
             self._buffer.clear()
-        # ── YAMA-1a: Kalan persist kareleri kurtarma ──────────────
-        # stop() öncesinde birikmiş < PERSIST_FRAMES kareyi SealEvent
-        # olarak seal kuyruğuna gönder; böylece safety flush bunları
-        # da diske yazabilir.
         with self._persist_lock:
-            leftover_persist_frames = list(self._persist_frames)
-            leftover_persist_action = self._persist_action
-            leftover_persist_phase = self._persist_phase
             self._persist_action = None
             self._persist_phase = "UNKNOWN_PHASE"
             self._persist_frames = []
-
-        if leftover_persist_frames and leftover_persist_action:
-            with self._state_lock:
-                _rescue_session_id = self._session_id
-            rescue_event = SealEvent(
-                session_id=_rescue_session_id,
-                frames=leftover_persist_frames,
-                action_label=leftover_persist_action,
-                phase=leftover_persist_phase,
-                action_source="persist_rescue",
-                ts_seal_unix=time.time(),
-                char_position=self._get_char_position(),
-                extra={"rescued_from_stop": True},
-            )
-            try:
-                self._seal_queue.put_nowait(rescue_event)
-            except Full:
-                pass  # Kuyruk dolu — bu kareleri kaybet (nadir)
         self._clear_ram_events(log_drop=False)
         self._purge_pending_seal_events(log_drop=False)
         with self._flush_completed_lock:
@@ -288,16 +264,10 @@ class SequentialRecorder:
             # signal_success HİÇ çağrılmadı ama RAM'de veri olabilir.
             # SON ŞANS: Tüm in-flight eventleri RAM'e taşı ve flush dene.
             # (Kapıyı henüz kapatmıyoruz — _stage_event kabul etsin diye.)
-            #
-            # YAMA-1b: persist_rescue event'i de dahil tüm in-flight
-            # eventlerin worker tarafından işlenmesini bekle.
             try:
                 self._seal_queue.join()
             except Exception:
                 pass
-            # Kısa bekleme: seal_worker_loop'un son event'i _ram_events'e
-            # taşıması için (task_done → join return arası yarış penceresi)
-            time.sleep(0.05)
             self._drain_seal_queue_to_ram()
             with self._ram_lock:
                 remaining = len(self._ram_events)
@@ -593,13 +563,6 @@ class SequentialRecorder:
     def shutdown(self):
         """Graceful shutdown for app exit."""
         self.stop()
-        # YAMA-1c: Flush writer'ın diske yazmayı bitirmesini bekle.
-        # Daemon thread olduğu için _stop_event.set() sonrası anında
-        # ölür; flush_queue'daki son job kaybolur.
-        try:
-            self._flush_queue.join()
-        except Exception:
-            pass
         self._stop_event.set()
         if self._mouse_listener is not None:
             try:
@@ -737,19 +700,9 @@ class SequentialRecorder:
                 self._flush_queue.task_done()
 
     def _stage_event(self, event: SealEvent):
-        """Append event to RAM circular buffer with frame-count cap.
-
-        KÖK NEDEN DÜZELTMESİ #3:
-        Eski kod burada `(not recording)` kontrolü yapıyordu.
-        `recording` flag'i "yeni kare yakala" anlamına gelir, "kuyrukta
-        bekleyen event'leri reddet" anlamına GELMEZ.  stop() metodu
-        recording=False set ettikten sonra _drain_seal_queue_to_ram()
-        çağırıyordu → bu metot _stage_event'i çağırıyordu → recording=False
-        olduğu için TÜM eventler sessizce DROP ediliyordu → RAM boş
-        kalıyordu → signal_flush hiçbir şey yazamıyordu → diske 0 byte.
-
-        Düzeltme: Gate sadece `accepting` ve `session_id` kontrol eder.
-        `recording` kontrolü kaldırıldı.
+        """
+        Append event to RAM circular buffer with frame-count cap.
+        KÖK NEDEN DÜZELTMESİ: 'recording' gate kontrolü kaldırıldı.
         """
         if not event.frames:
             return
@@ -758,7 +711,9 @@ class SequentialRecorder:
             active_session = self._session_id
             accepting = self._session_accepting_events
 
-        # Drop stale events (old session or fail/closed state)
+        # ÖNEMLİ: Sadece 'accepting' ve 'session_id' kontrol edilir.
+        # 'self._recording' kontrolü burada YAPILMAZ; çünkü stop() çağrıldığında
+        # kuyruktaki son karelerin (exit_map anı) RAM'e taşınması gerekir.
         if (not accepting) or (event.session_id != active_session):
             return
 
@@ -768,7 +723,7 @@ class SequentialRecorder:
             self._ram_events.append(event)
             self._ram_frames_total += len(event.frames)
 
-            # Keep only latest frames in RAM.
+            # RAM limitini koru (Circular Buffer)
             while self._ram_frames_total > self._max_ram_frames and self._ram_events:
                 old = self._ram_events.popleft()
                 dropped_events += 1
@@ -777,11 +732,10 @@ class SequentialRecorder:
 
         if dropped_events:
             self.bot.log(
-                f"SequentialRecorder: RAM circular trim. dropped_events={dropped_events} "
+                f"SequentialRecorder: RAM dairesel temizlik. dropped_events={dropped_events} "
                 f"dropped_frames={dropped_frames} limit={self._max_ram_frames}",
-                level="DEBUG",
+                level="DEBUG"
             )
-
     def _write_flush_job(self, job: FlushJob):
         """Write all staged events of a flush job to disk."""
         if not job.events:

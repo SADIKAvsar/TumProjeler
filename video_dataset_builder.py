@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 video_dataset_builder.py — PyTorch DataLoader Entegrasyonu (v2.0)
 =================================================================
@@ -37,6 +38,7 @@ from __future__ import annotations
 
 import json
 import random
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -53,6 +55,13 @@ try:
     from decord import VideoReader, cpu as decord_cpu
 except ImportError:
     raise ImportError("decord gerekli: pip install decord")
+
+try:
+    import cv2
+
+    HAS_OPENCV = True
+except Exception:
+    HAS_OPENCV = False
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -99,8 +108,12 @@ def _parse_session(session_dir: Path) -> List[ActionSample]:
 
     # Video frame sayısını al (decord ile hızlı)
     try:
-        vr = VideoReader(str(video_path), ctx=decord_cpu(0))
+        vr = VideoReader(str(video_path), ctx=decord_cpu(0), num_threads=1)
         total_frames = len(vr)
+        if total_frames >= 3:
+            # Erken bozuk-video elemesi: rastgele frame decode probe
+            probe_indices = sorted({0, total_frames // 2, total_frames - 1})
+            _ = vr.get_batch(probe_indices)
         del vr  # Handle'ı hemen serbest bırak
     except Exception:
         return []
@@ -209,6 +222,7 @@ class LoAVideoDataset(Dataset):
         samples: List[ActionSample],
         transform: Optional[Callable] = None,
         resize: Optional[Tuple[int, int]] = None,
+        max_open_readers: int = 2,
     ):
         """
         Args:
@@ -222,26 +236,34 @@ class LoAVideoDataset(Dataset):
 
         # Video reader cache — aynı videoyu tekrar açmamak için
         # {video_path: VideoReader}
-        self._vr_cache: Dict[str, VideoReader] = {}
+        self.max_open_readers = max(1, int(max_open_readers))
+        self._vr_cache: "OrderedDict[str, VideoReader]" = OrderedDict()
 
     def __len__(self) -> int:
         return len(self.samples)
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         sample = self.samples[idx]
-
-        # Lazy VideoReader açma
-        vr = self._get_video_reader(sample.video_path)
-
-        # Frame üçlüsünü oku
         indices = [sample.frame_before, sample.frame_action, sample.frame_after]
+        frames: Optional[np.ndarray] = None
+
+        # Primary path: decord
         try:
-            frames = vr.get_batch(indices).asnumpy()  # (3, H, W, C) uint8 RGB
+            vr = self._get_video_reader(sample.video_path)
+            try:
+                frames = vr.get_batch(indices).asnumpy()  # (3, H, W, C) uint8 RGB
+            except Exception:
+                frames = np.stack([self._safe_read_frame(vr, i) for i in indices])
         except Exception:
-            # Fallback: tek tek oku
-            frames = np.stack([
-                self._safe_read_frame(vr, i) for i in indices
-            ])
+            frames = None
+
+        # Secondary path: OpenCV fallback
+        if frames is None and HAS_OPENCV:
+            frames = self._read_triplet_with_opencv(sample.video_path, indices)
+
+        # Last-resort blank triplet (prevents hard crash on rare decode glitches)
+        if frames is None:
+            frames = np.zeros((3, 240, 320, 3), dtype=np.uint8)
 
         f_before = self._process_frame(frames[0])
         f_action = self._process_frame(frames[1])
@@ -265,21 +287,63 @@ class LoAVideoDataset(Dataset):
         }
 
     def _get_video_reader(self, video_path: str) -> VideoReader:
-        """Video reader'ı cache'den al veya oluştur."""
-        if video_path not in self._vr_cache:
-            self._vr_cache[video_path] = VideoReader(
-                video_path, ctx=decord_cpu(0)
-            )
-        return self._vr_cache[video_path]
+        """Video reader'i cache'den al veya olustur (LRU)."""
+        if video_path in self._vr_cache:
+            vr = self._vr_cache.pop(video_path)
+            self._vr_cache[video_path] = vr
+            return vr
+
+        vr = VideoReader(video_path, ctx=decord_cpu(0), num_threads=1)
+        self._vr_cache[video_path] = vr
+
+        while len(self._vr_cache) > self.max_open_readers:
+            _, old_vr = self._vr_cache.popitem(last=False)
+            try:
+                del old_vr
+            except Exception:
+                pass
+        return vr
 
     @staticmethod
     def _safe_read_frame(vr: VideoReader, idx: int) -> np.ndarray:
-        """Tek frame güvenli okuma."""
+        """Tek frame guvenli okuma."""
         try:
             idx = max(0, min(len(vr) - 1, idx))
             return vr[idx].asnumpy()
         except Exception:
             return np.zeros((240, 320, 3), dtype=np.uint8)
+
+    @staticmethod
+    def _read_triplet_with_opencv(video_path: str, indices: List[int]) -> Optional[np.ndarray]:
+        """OpenCV fallback for sessions that intermittently fail in decord."""
+        if not HAS_OPENCV:
+            return None
+
+        cap = None
+        try:
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                return None
+
+            total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+            frames: List[np.ndarray] = []
+            for idx in indices:
+                safe_idx = max(0, idx)
+                if total > 0:
+                    safe_idx = min(total - 1, safe_idx)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, safe_idx)
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    return None
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frames.append(frame)
+            return np.stack(frames)
+        except Exception:
+            return None
+        finally:
+            if cap is not None:
+                cap.release()
+
 
     def _process_frame(self, frame: np.ndarray) -> torch.Tensor:
         """
@@ -381,6 +445,24 @@ def stratified_split(
     return train_samples, test_samples
 
 
+def collate_action_batch(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Windows multiprocessing-safe collate function.
+    Must stay at module scope so DataLoader workers can pickle it.
+    """
+    if not batch:
+        return {}
+
+    result: Dict[str, Any] = {}
+    for key in batch[0]:
+        values = [item[key] for item in batch]
+        if isinstance(values[0], torch.Tensor):
+            result[key] = torch.stack(values)
+        else:
+            result[key] = values
+    return result
+
+
 def build_dataloaders(
     video_root: str,
     train_ratio: float = 0.8,
@@ -389,6 +471,7 @@ def build_dataloaders(
     resize: Optional[Tuple[int, int]] = None,
     transform: Optional[Callable] = None,
     seed: int = 42,
+    max_open_readers: int = 2,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     End-to-end: tarama → split → Dataset → DataLoader.
@@ -418,38 +501,31 @@ def build_dataloaders(
         all_samples, train_ratio=train_ratio, seed=seed
     )
 
-    # Collate: string alanları batch'te list olarak topla
-    def _collate_fn(batch):
-        result = {}
-        for key in batch[0]:
-            values = [item[key] for item in batch]
-            if isinstance(values[0], torch.Tensor):
-                result[key] = torch.stack(values)
-            else:
-                result[key] = values
-        return result
+    train_ds = LoAVideoDataset(train_samples, transform=transform, resize=resize, max_open_readers=max_open_readers)
+    test_ds = LoAVideoDataset(test_samples, transform=transform, resize=resize, max_open_readers=max_open_readers)
 
-    train_ds = LoAVideoDataset(train_samples, transform=transform, resize=resize)
-    test_ds = LoAVideoDataset(test_samples, transform=transform, resize=resize)
+    loader_kwargs = {
+        "batch_size": batch_size,
+        "num_workers": num_workers,
+        "collate_fn": collate_action_batch,
+        "pin_memory": torch.cuda.is_available(),
+        "drop_last": False,
+    }
+    if num_workers > 0:
+        # ffmpeg/decord memory spikes on weak CPUs: keep worker prefetch minimal.
+        loader_kwargs["prefetch_factor"] = 1
+        loader_kwargs["persistent_workers"] = False
 
     train_loader = DataLoader(
         train_ds,
-        batch_size=batch_size,
         shuffle=True,
-        num_workers=num_workers,
-        collate_fn=_collate_fn,
-        pin_memory=torch.cuda.is_available(),
-        drop_last=False,
+        **loader_kwargs,
     )
 
     test_loader = DataLoader(
         test_ds,
-        batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        collate_fn=_collate_fn,
-        pin_memory=torch.cuda.is_available(),
-        drop_last=False,
+        **loader_kwargs,
     )
 
     return train_loader, test_loader

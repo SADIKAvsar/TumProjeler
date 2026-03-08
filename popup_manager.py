@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # modules/popup_manager.py
 import time
 from utils import log_to_file
@@ -7,28 +8,6 @@ class PopupManager:
         self.bot = bot
         self.cfg = bot.popup_config # module_general içindeki POPUP_MONITOR bloğu
         self.popups = self.cfg.get("popups_to_close", []) # Kapatılacak resim listesi
-
-    def _is_action_lock_busy(self):
-        """
-        action_lock durumunu RLock uyumlu sekilde kontrol eder.
-        """
-        try:
-            if hasattr(self.bot, "is_action_lock_busy"):
-                return bool(self.bot.is_action_lock_busy())
-        except Exception:
-            pass
-
-        lock_obj = getattr(self.bot, "action_lock", None)
-        if lock_obj is None:
-            return False
-
-        locked_fn = getattr(lock_obj, "locked", None)
-        if callable(locked_fn):
-            try:
-                return bool(locked_fn())
-            except Exception:
-                return False
-        return False
 
     def monitor_thread(self):
         """Ekrana gelen gereksiz pencereleri periyodik olarak kontrol eder."""
@@ -43,7 +22,7 @@ class PopupManager:
 
         while True:
             # Bot duraklatılmışsa veya başka bir kritik aksiyon varsa bekle
-            if not self.bot.running.is_set() or self.bot.paused or self._is_action_lock_busy():
+            if not self.bot.running.is_set() or self.bot.paused or self.bot.is_action_lock_busy():
                 time.sleep(5)
                 continue
 

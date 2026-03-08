@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 video_recorder_integration.py — LoABoTv5.9 Video Kayıt Entegrasyonu
 =====================================================================

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 pytorch_inference.py — Temporal 9-Kanal Inference Engine (v2.0)
 ================================================================
@@ -578,8 +579,15 @@ class PyTorchInferenceEngine:
 ACTION_COMMAND_MAP: Dict[str, Dict] = {
     "key_a":              {"type": "key",      "key": "a"},
     "key_q":              {"type": "key",      "key": "q"},
-    "key_v":              {"type": "key",      "key": "v"},
+    "key_e":              {"type": "key",      "key": "e"},
+    "key_r":              {"type": "key",      "key": "r"},
+    "key_w":              {"type": "key",      "key": "w"},
+    "key_space":          {"type": "key",      "key": "space"},
     "key_z":              {"type": "key",      "key": "z"},
+    "key_1":              {"type": "key",      "key": "1"},
+    "key_2":              {"type": "key",      "key": "2"},
+    "key_3":              {"type": "key",      "key": "3"},
+    "key_4":              {"type": "key",      "key": "4"},
     "mouse_click":        {"type": "click"},
     "noop":               {"type": "noop"},
     "event_sequence":     {"type": "sequence", "name": "event"},

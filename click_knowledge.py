@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 click_knowledge.py — Tıklama Koordinat Bilgi Tabanı
 ====================================================

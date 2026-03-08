@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Local-first decision engine.
 
@@ -19,7 +20,7 @@ class DecisionHistoryLogger:
     """JSONL audit trail for local decisions."""
 
     def __init__(self, log_path: str = None):
-        default_path = project_path(r"E:\LoABot_Training_Data\runtime_data\decision_history.jsonl")
+        default_path = project_path(r"D:\LoABot_Training_Data\runtime_data\decision_history.jsonl")
         self.log_path = Path(log_path or default_path)
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -81,8 +82,8 @@ class AIEngine:
         self.observer_mode = bool(s.get("LOCAL_AI_OBSERVER_MODE", False))
         self.fallback_to_rules = True
 
-        memory_path = s.get("LOCAL_AI_MEMORY_PATH") or r"E:\LoABot_Training_Data\runtime_data\ai_memory.json"
-        history_path = s.get("LOCAL_AI_HISTORY_PATH") or r"E:\LoABot_Training_Data\runtime_data\decision_history.jsonl"
+        memory_path = s.get("LOCAL_AI_MEMORY_PATH") or r"D:\LoABot_Training_Data\runtime_data\ai_memory.json"
+        history_path = s.get("LOCAL_AI_HISTORY_PATH") or r"D:\LoABot_Training_Data\runtime_data\decision_history.jsonl"
         self.memory = MemoryManager(memory_path)
         self.history = DecisionHistoryLogger(history_path)
 

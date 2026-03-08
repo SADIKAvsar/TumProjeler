@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import threading
 import time
@@ -67,12 +68,11 @@ class LoABot:
         if hasattr(self, "video_recorder") and hasattr(self, "user_monitor"):
             self.video_recorder.late_subscribe()
 
-        # ── v6.0 Altyapı: GameState + EventBus + BotBridge ──────
+        # v6.0 core entegrasyonu: GameState + EventBus + BotBridge
         try:
             from core.bootstrap import bootstrap_v6
             self.game_state, self.event_bus, self.bridge = bootstrap_v6(self)
         except ImportError:
-            # core/ klasörü yoksa v5.9 modunda devam et
             self.game_state = None
             self.event_bus = None
             self.bridge = None
@@ -84,7 +84,7 @@ class LoABot:
         self._initialize_boss_data()
 
         self.initialized = True
-        self.log("LoABot v6.0: GameState + EventBus Mimarisi Aktif")
+        self.log("LoABot v6.0: v5.9 stabil runtime + GameState/EventBus/Bridge aktif")
 
     def _load_initial_config(self) -> dict:
         self.log("Config (GeminiProConfig.yaml) yukleniyor...")
@@ -114,7 +114,8 @@ class LoABot:
         else:
             self.walk_times = {}
         self.running = threading.Event()
-        self.action_lock = threading.Lock()
+        # Re-entrant lock: nested mission/state updates in same thread must not deadlock.
+        self.action_lock = threading.RLock()
         self.paused = False
         self.active_event = None
         self.attacking_target_aciklama = None
@@ -186,11 +187,35 @@ class LoABot:
             self.training_logger.log_outcome(outcome_name, payload)
 
     def set_global_mission_phase(self, phase: str, stage: str, reason: str = "", extra: dict = None):
-        with self.action_lock:
+        """
+        Mission state write with lock-timeout guard.
+        Never block forever on action_lock; this prevents total bot freeze.
+        """
+        lock_timeout = float(self.settings.get("MISSION_PHASE_LOCK_TIMEOUT_SN", 2.0))
+        acquired = False
+        try:
+            acquired = self.action_lock.acquire(timeout=max(0.1, lock_timeout))
+        except Exception:
+            acquired = False
+
+        if not acquired:
+            self.log(
+                f"[LOCK_GUARD] set_global_mission_phase lock timeout ({lock_timeout:.1f}s). "
+                "State unlocked olarak guncellendi.",
+                level="WARNING",
+            )
+
+        try:
             self._global_phase = phase
             self._global_stage = stage
             self._global_mission_reason = reason
             self._global_mission_extra = dict(extra or {})
+        finally:
+            if acquired:
+                try:
+                    self.action_lock.release()
+                except Exception:
+                    pass
 
         self.log_training_state(
             "mission_phase_change",
@@ -284,6 +309,37 @@ class LoABot:
             time.sleep(0.1)
         return True
 
+    def is_action_lock_busy(self) -> bool:
+        """
+        RLock/Lock uyumlu "kilit mesgul mu?" kontrolu.
+        """
+        lock_obj = getattr(self, "action_lock", None)
+        if lock_obj is None:
+            return False
+
+        locked_fn = getattr(lock_obj, "locked", None)
+        if callable(locked_fn):
+            try:
+                return bool(locked_fn())
+            except Exception:
+                pass
+
+        # RLock fallback: non-blocking acquire deneyerek mesguliyet tespiti.
+        try:
+            acquired = lock_obj.acquire(blocking=False)
+        except TypeError:
+            acquired = lock_obj.acquire(False)
+        except Exception:
+            return False
+
+        if acquired:
+            try:
+                lock_obj.release()
+            except Exception:
+                pass
+            return False
+        return True
+
     def _set_spawn_time(self, boss_adi: str, kalan_saniye: int, source: str = "manual"):
         """GUI zamanlayıcısı: kalan süre (saniye) → mutlak spawn timestamp hesapla."""
         ts = time.time() + int(kalan_saniye)
@@ -362,12 +418,27 @@ class LoABot:
 
             self._auto_log_trigger = ""
 
-            if trigger == "boss_attack" and getattr(self, "attacking_target_aciklama", None):
-                self.log(
-                    "AUTO-LOG: boss_attack kaydi kapanirken saldiri hedefi temizlendi.",
-                    level="DEBUG",
-                )
-                self.attacking_target_aciklama = None
+            if trigger == "boss_attack":
+                boss_adi = getattr(self, "attacking_target_aciklama", None)
+                if boss_adi:
+                    # If a boss flow timed out/stuck, push spawn forward to avoid 00:00:00 stale timers.
+                    try:
+                        boss_obj = self.bosslar.get(str(boss_adi)) if hasattr(self, "bosslar") else None
+                        if boss_obj is not None and hasattr(self, "combat"):
+                            self.combat.recalculate_times_interrupted(boss_obj)
+                    except Exception as exc:
+                        self.log(f"AUTO-LOG fallback spawn guncelleme hatasi: {exc}", level="WARNING")
+
+                    self.log(
+                        "AUTO-LOG: boss_attack kaydi kapanirken saldiri hedefi temizlendi.",
+                        level="DEBUG",
+                    )
+                    self.attacking_target_aciklama = None
+
+                # Safety: mission phase must not stay in NAV/COMBAT/LOOT after forced auto-stop.
+                current_phase = str(getattr(self, "_global_phase", "")).strip().upper()
+                if current_phase in {"NAV_PHASE", "COMBAT_PHASE", "LOOT_PHASE"}:
+                    self.stop_global_mission(reason="auto_stop_boss_attack")
 
     def force_cleanup_combat_state(self, reason: str = "event_interrupt") -> None:
         """

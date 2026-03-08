@@ -1,3 +1,4 @@
+﻿# -*- coding: utf-8 -*-
 import time
 from datetime import datetime, time as dt_time
 
@@ -201,77 +202,62 @@ class EventManager:
             extra={"event_flag": "Event_Start", "event_name": event["name"]},
         )
         self.bot.active_event = event
-        # Event akisi baslarken stale KATMAN bilgisini temizle.
-        self.bot.location_manager.set_current_location_by_name("UNKNOWN")
         action_success = False
         try:
-            lock_timeout = float(self.bot.settings.get("EVENT_ACTION_LOCK_TIMEOUT_SN", 0.5))
-            lock_acquired = self.bot.action_lock.acquire(timeout=max(0.1, lock_timeout))
-            if not lock_acquired:
-                self.bot.log(
-                    f"Etkinlik ertelendi: {event['name']} (action_lock mesgul).",
-                    level="DEBUG",
-                )
+            if not self.bot.running.is_set() or self.bot.paused:
                 return
-            try:
-                if not self.bot.running.is_set() or self.bot.paused:
+
+            if self.bot.location_manager.get_region_name() != "EXP_FARM":
+                if not self.bot.automator.return_to_exp_farm(force_restart_if_failed=False):
+                    self.bot.log("Etkinlik oncesi EXP_FARM'a donulemedi.")
                     return
 
-                if self.bot.location_manager.get_region_name() != "EXP_FARM":
-                    if not self.bot.automator.return_to_exp_farm(force_restart_if_failed=False):
-                        self.bot.log("Etkinlik oncesi EXP_FARM'a donulemedi.")
-                        return
+            # Dinamik timeout: etkinlik kalan suresi + 60s tampon (min 120s, max 600s).
+            # Sabit 3600s yerine, etkinlik bitince kayit da durur → disk/RAM guvenligi.
+            _end_dt = datetime.combine(datetime.now().date(), event["end_time"])
+            _remaining_sn = max(0, (_end_dt - datetime.now()).total_seconds())
+            _rec_timeout = min(max(int(_remaining_sn) + 60, 120), 600)
+            self.bot.auto_start_recording("event_entry", timeout_sec=_rec_timeout)
 
-                # Dinamik timeout: etkinlik kalan suresi + 60s tampon (min 120s, max 600s).
-                # Sabit 3600s yerine, etkinlik bitince kayit da durur → disk/RAM guvenligi.
-                _end_dt = datetime.combine(datetime.now().date(), event["end_time"])
-                _remaining_sn = max(0, (_end_dt - datetime.now()).total_seconds())
-                _rec_timeout = min(max(int(_remaining_sn) + 60, 120), 600)
-                self.bot.auto_start_recording("event_entry", timeout_sec=_rec_timeout)
+            action_sequence = event.get("action_sequence", [])
+            if not action_sequence:
+                self.bot.log(f"HATA: '{event['name']}' icin action_sequence bos.")
+            else:
+                action_success = self.bot._run_sequence(
+                    action_sequence,
+                    self.bot.timed_events_cfg.get("coordinates", {}),
+                )
 
-                action_sequence = event.get("action_sequence", [])
-                if not action_sequence:
-                    self.bot.log(f"HATA: '{event['name']}' icin action_sequence bos.")
-                else:
-                    action_success = self.bot._run_sequence(
-                        action_sequence,
-                        self.bot.timed_events_cfg.get("coordinates", {}),
-                    )
+            if action_success:
+                self.bot.set_global_mission_phase(
+                    phase="EVENT_PHASE",
+                    stage="Event_Action",
+                    reason=event["name"],
+                    extra={"event_name": event["name"]},
+                )
+                self.bot.location_manager.set_current_location_by_name(event["location_name_on_enter"])
+                self.bot.log(f"'{event['name']}' etkinligine giris basarili.")
+                self.bot.log_training_outcome(
+                    "event_entry",
+                    {"event_name": event["name"], "success": True},
+                )
+                if hasattr(self.bot, "reward_engine"):
+                    self.bot.reward_engine.on_event_entry(event_name=event["name"], success=True)
+            else:
+                self.bot.log(f"'{event['name']}' giris basarisiz.")
+                self.bot.log_training_outcome(
+                    "event_entry",
+                    {"event_name": event["name"], "success": False},
+                )
+                if hasattr(self.bot, "reward_engine"):
+                    self.bot.reward_engine.on_event_entry(event_name=event["name"], success=False)
 
+            seq = getattr(self.bot, "seq_recorder", None)
+            if seq is not None:
                 if action_success:
-                    self.bot.set_global_mission_phase(
-                        phase="EVENT_PHASE",
-                        stage="Event_Action",
-                        reason=event["name"],
-                        extra={"event_name": event["name"]},
-                    )
-                    self.bot.location_manager.set_current_location_by_name(event["location_name_on_enter"])
-                    self.bot.log(f"'{event['name']}' etkinligine giris basarili.")
-                    self.bot.log_training_outcome(
-                        "event_entry",
-                        {"event_name": event["name"], "success": True},
-                    )
-                    if hasattr(self.bot, "reward_engine"):
-                        self.bot.reward_engine.on_event_entry(event_name=event["name"], success=True)
+                    seq.signal_success(reason=f"event_{event['name']}_success")
                 else:
-                    self.bot.log(f"'{event['name']}' giris basarisiz.")
-                    # Giris yari basarili olmus olabilir; anchor bazli konumu zorla tazele.
-                    self.bot.location_manager.update_visual_location()
-                    self.bot.log_training_outcome(
-                        "event_entry",
-                        {"event_name": event["name"], "success": False},
-                    )
-                    if hasattr(self.bot, "reward_engine"):
-                        self.bot.reward_engine.on_event_entry(event_name=event["name"], success=False)
-
-                seq = getattr(self.bot, "seq_recorder", None)
-                if seq is not None:
-                    if action_success:
-                        seq.signal_success(reason=f"event_{event['name']}_success")
-                    else:
-                        seq.signal_fail(reason=f"event_{event['name']}_fail")
-            finally:
-                self.bot.action_lock.release()
+                    seq.signal_fail(reason=f"event_{event['name']}_fail")
 
             if action_success and event.get("auto_exits", False):
                 end_dt = datetime.combine(datetime.now().date(), event["end_time"])
@@ -329,9 +315,11 @@ class EventManager:
                             break
                     # ------------------------------------------
 
-                with self.bot.action_lock:
-                    if self.bot.running.is_set():
-                        self.bot.automator.return_to_exp_farm(force_restart_if_failed=True)
+                # Not: return_to_exp_farm() -> stop_global_mission() zinciri
+                # set_global_mission_phase() ile action_lock kullanir.
+                # Burada action_lock eldeyken cagrilirsa self-deadlock olur.
+                if self.bot.running.is_set():
+                    self.bot.automator.return_to_exp_farm(force_restart_if_failed=True)
                 
                 self.bot.auto_stop_recording() # <--- DÖNÜŞ YAPILDIKTAN SONRA ANINDA KAPAT
             self.last_event_run[event_key] = True
