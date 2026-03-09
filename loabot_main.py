@@ -270,9 +270,37 @@ class LoABot:
         return ""
 
     def toggle_recording(self):
-        # MANUEL KAYIT TAMAMEN DEVRE DIŞI BIRAKILDI
-        self.log("Manuel kayıt butonu devre dışı bırakıldı. Kayıt kontrolü tamamen Otonom Ajan'da.", level="WARNING")
-        return
+        """
+        GUI kayit butonu ile manuel video kaydini baslat/durdur.
+
+        Not:
+        - Manuel kayit acikken otomatik kayit tetikleri dikkate alinmaz.
+        - Oto kayit aktifken manuel baslatma engellenir.
+        """
+        vid = getattr(self, "video_recorder", None)
+        if vid is None:
+            self.log("Manuel kayit: VideoRecorder hazir degil.", level="WARNING")
+            return
+
+        if getattr(self, "_auto_log_active", False):
+            self.log("Manuel kayit acilamadi: otomatik kayit aktif.", level="WARNING")
+            return
+
+        if getattr(self, "_manual_recording", False):
+            stopped = bool(vid.stop(success=True, reason="manual_stop"))
+            self._manual_recording = False
+            if stopped:
+                self.log("Manuel kayit durduruldu.")
+            else:
+                self.log("Manuel kayit durdurulamadi.", level="WARNING")
+            return
+
+        started = bool(vid.start(trigger_type="manual"))
+        if started:
+            self._manual_recording = True
+            self.log("Manuel kayit baslatildi.")
+        else:
+            self.log("Manuel kayit baslatilamadi.", level="WARNING")
 
     def start(self):
         """GUI ▶ butonu: Botu baslatir veya duraklamadan cikarir."""
@@ -377,21 +405,30 @@ class LoABot:
         )
 
     def auto_start_recording(self, trigger_type: str, timeout_sec: float = 120.0) -> bool:
-        """Sadece sistem (boss/event manager) tarafından tetiklenen otomatik kayıt."""
-        # Zaten bir kayıt aktifse, üst üste başlatmayı engelle
+        """Sadece sistem (boss/event manager) tarafindan tetiklenen otomatik kayit."""
+        # Varsayilan politika: kayit kontrolu kullanici butonunda.
+        manual_only = bool(self.settings.get("MANUAL_VIDEO_CONTROL_ONLY", True))
+        if manual_only:
+            return False
+
+        # Manuel kayit acikken auto kayit acilmaz.
+        if getattr(self, "_manual_recording", False):
+            return False
+
+        # Zaten bir kayit aktifse, ust uste baslatmayi engelle
         if getattr(self, "_auto_log_active", False):
             return False
 
-        self.log(f"[AUTO-LOG] Kayıt başlatılıyor. Tetik: {trigger_type}", level="DEBUG")
+        self.log(f"[AUTO-LOG] Kayit baslatiliyor. Tetik: {trigger_type}", level="DEBUG")
         self._auto_log_active = True
         self._auto_log_trigger = trigger_type
 
-        # Video kaydını başlat
+        # Video kaydini baslat
         vid = getattr(self, "video_recorder", None)
         if vid is not None:
             vid.start(trigger_type=trigger_type)
 
-        # Güvenlik zamanlayıcısı (kayıt sonsuza kadar açık kalmasın)
+        # Guvenlik zamanlayicisi (kayit sonsuza kadar acik kalmasin)
         if hasattr(self, "_auto_log_timer") and self._auto_log_timer:
             self._auto_log_timer.cancel()
 
@@ -472,7 +509,16 @@ class LoABot:
         if current_phase in {"NAV_PHASE", "COMBAT_PHASE", "LOOT_PHASE"}:
             self.stop_global_mission(reason=f"force_cleanup:{reason}")
 
-        # Güvenlik: devam eden boss kaydını kapat
+        # Manuel kayit aciksa guvenli kapat
+        if getattr(self, "_manual_recording", False):
+            vid = getattr(self, "video_recorder", None)
+            if vid is not None and vid.is_recording:
+                try:
+                    vid.stop(success=False, reason=f"manual_stop_{reason}")
+                except Exception:
+                    pass
+            self._manual_recording = False
+        # Guvenlik: devam eden boss kaydini kapat
         self.auto_stop_recording()
 
         self.log(f"[FORCE_CLEANUP] Temizlik tamamlandi. Boss: {boss_adi or 'yok'}")
@@ -502,6 +548,14 @@ class LoABot:
 
             self.running.clear()
             self.auto_stop_recording()
+            if getattr(self, "_manual_recording", False):
+                vid = getattr(self, "video_recorder", None)
+                if vid is not None and vid.is_recording:
+                    try:
+                        vid.stop(success=False, reason="manual_stop_restart")
+                    except Exception:
+                        pass
+                self._manual_recording = False
             self.attacking_target_aciklama = None
             self.active_event = None
 
