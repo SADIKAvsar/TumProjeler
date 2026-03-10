@@ -1,0 +1,49 @@
+Live anchor detection report - Fri Feb  6 17:47:47 2026
+Config: C:\LoABot\modules\..\GeminiProConfig.YAML
+
+UNKNOWN: NO_ANCHOR_CONFIGURED
+EXP_FARM[0]: FOUND image=exp_farm_anchor.png region=anchor_master_region score=0.994 bbox=(2256,467,2560,516)
+KATMAN_1[0]: NOT_FOUND image=katman_1_anchor.png region=anchor_master_region conf=0.6
+KATMAN_1: NO_ANCHOR_FOUND_ON_SCREEN
+KATMAN_2[0]: NOT_FOUND image=katman_2_anchor.png region=anchor_master_region conf=0.6
+KATMAN_2: NO_ANCHOR_FOUND_ON_SCREEN
+CELESTIAL_BOSS[0]: NOT_FOUND image=celestial_boss_anchor.png region=anchor_master_region conf=0.6
+CELESTIAL_BOSS: NO_ANCHOR_FOUND_ON_SCREEN
+ITTIFAK_BOSS[0]: NOT_FOUND image=ittifak_boss_anchor.png region=anchor_master_region conf=0.6
+ITTIFAK_BOSS: NO_ANCHOR_FOUND_ON_SCREEN
+WILDLANDS[0]: NOT_FOUND image=wildlands_anchor1.png region=region_wild_lands_boss_list conf=0.6
+WILDLANDS: NO_ANCHOR_FOUND_ON_SCREEN
+CROSSERVER3v3ARENA[0]: NOT_FOUND image=crosserver_3_v_3_anchor.png region=anchor_master_region conf=0.6
+CROSSERVER3v3ARENA: NO_ANCHOR_FOUND_ON_SCREEN
+GUILD_WAR[0]: NOT_FOUND image=guild_war_anchor.png region=anchor_master_region conf=0.6
+GUILD_WAR: NO_ANCHOR_FOUND_ON_SCREEN
+IBLISSAVASI[0]: NOT_FOUND image=iblissavasi_anchor.png region=anchor_master_region conf=0.6
+IBLISSAVASI: NO_ANCHOR_FOUND_ON_SCREEN
+DERINDENIZMUCADELESI[0]: NOT_FOUND image=derin_deniz_anchor.png region=anchor_master_region conf=0.6
+DERINDENIZMUCADELESI: NO_ANCHOR_FOUND_ON_SCREEN
+HOLLYGRAIL[0]: NOT_FOUND image=holly_grail_anchor.png region=anchor_master_region conf=0.6
+HOLLYGRAIL: NO_ANCHOR_FOUND_ON_SCREEN
+SORU_CEVAP[0]: NOT_FOUND image=soru_cevap_anchor.png region=anchor_master_region conf=0.6
+SORU_CEVAP: NO_ANCHOR_FOUND_ON_SCREEN
+KATCIKMA[0]: NOT_FOUND image=kat_cikma_anchor.png region=anchor_master_region conf=0.6
+KATCIKMA: NO_ANCHOR_FOUND_ON_SCREEN
+HORTLAKDIYARI[0]: NOT_FOUND image=hortlak_diyari_anchor.png region=anchor_master_region conf=0.6
+HORTLAKDIYARI: NO_ANCHOR_FOUND_ON_SCREEN
+CEHENNEMSINIRLARI[0]: NOT_FOUND image=cehennem_sinirlari_anchor.png region=anchor_master_region conf=0.6
+CEHENNEMSINIRLARI: NO_ANCHOR_FOUND_ON_SCREEN
+ASTROLABE[0]: NOT_FOUND image=astrolabe_of_fate_anchor.png region=anchor_master_region conf=0.6
+ASTROLABE: NO_ANCHOR_FOUND_ON_SCREEN
+WORLDBOSS[0]: NOT_FOUND image=world_boss_anchor.png region=anchor_master_region conf=0.6
+WORLDBOSS: NO_ANCHOR_FOUND_ON_SCREEN
+BOSSLAIR[0]: NOT_FOUND image=boss_lair_anchor.png region=anchor_master_region conf=0.6
+BOSSLAIR: NO_ANCHOR_FOUND_ON_SCREEN
+IVIDUALBOSS[0]: NOT_FOUND image=invidual_boss_anchor.png region=anchor_master_region conf=0.6
+IVIDUALBOSS: NO_ANCHOR_FOUND_ON_SCREEN
+XENOSPACE[0]: NOT_FOUND image=xeno_space_anchor.png region=anchor_master_region conf=0.6
+XENOSPACE: NO_ANCHOR_FOUND_ON_SCREEN
+WILDLANDS_BOSS[0]: NOT_FOUND image=wildlands_boss_anchor.png region=anchor_master_region conf=0.6
+WILDLANDS_BOSS: NO_ANCHOR_FOUND_ON_SCREEN
+EXPINSTANCE[0]: NOT_FOUND image=exp_instance_anchor.png region=anchor_master_region conf=0.6
+EXPINSTANCE: NO_ANCHOR_FOUND_ON_SCREEN
+EXREMISCASTLE[0]: NOT_FOUND image=extremis_castle_anchor.png region=anchor_master_region conf=0.6
+EXREMISCASTLE: NO_ANCHOR_FOUND_ON_SCREEN

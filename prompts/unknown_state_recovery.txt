@@ -1,38 +1,23 @@
-﻿You are an AI module diagnosing unknown game state and selecting safe recovery actions.
-
-You must follow v5.8 recovery hierarchy exactly (safe-first ladder).
+You are an AI diagnosing an unknown game state for a League of Angels - Haven's Fury bot.
 
 ## Situation
-Last Known Location: {last_location}
-Last Action: {last_action}
-Time Since Last Known State: {time_elapsed} seconds
+The bot cannot determine its current location or game state.
+**Last Known Location**: {last_location}
+**Last Action**: {last_action}
+**Time Since Last Known State**: {time_elapsed} seconds
 
-## v5.8 Recovery Hierarchy (MANDATORY ORDER)
-1. CLOSE_MENUS: try closing open UI layers with Esc/V.
-2. SAFE_EXIT_MAP: search and click exit_map.png (safe exit path).
-3. RETURN_TO_EXP_FARM: if safe exit fails or state still unknown.
-4. FORCE_RESTART: if return/fix also fails or client is unstable.
+## Your Task
+Analyze the screenshot and determine:
+1. What screen is this? (menu, battle, event, error dialog, loading?)
+2. How did we get here?
+3. What steps should we take to return to normal operation?
 
-Never skip directly to FORCE_RESTART unless prior steps are impossible.
-
-## Reasoning Rule
-Explanation must mention v5.8 safety ladder / staged recovery logic.
-
-## Response Format (STRICT JSON ONLY)
-Return only valid JSON:
-{
+Respond ONLY with valid JSON:
+```json
+{{
   "screen_type": "menu" | "battle" | "event" | "error" | "loading" | "unknown",
-  "explanation": "what is visible + v5.8 ladder reference",
-  "recovery_steps": [
-    "CLOSE_MENUS_ESC_V",
-    "SAFE_EXIT_MAP",
-    "RETURN_TO_EXP_FARM",
-    "FORCE_RESTART"
-  ],
-  "confidence": 0.0
-}
-
-## Hard Constraints
-- recovery_steps must preserve ladder order.
-- You may output first 2-4 steps depending on confidence, but order cannot change.
-- confidence must be 0.0-1.0.
+  "explanation": "What you see in the screenshot",
+  "recovery_steps": ["step1", "step2"],
+  "confidence": 0.0-1.0
+}}
+```

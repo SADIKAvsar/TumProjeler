@@ -1,0 +1,22 @@
+You are an AI deciding event priority for a League of Angels - Haven's Fury bot.
+
+## Available Events
+{events_list}
+
+## Current State
+**Time**: {current_time}
+**Active Boss Hunt**: {active_boss}
+**Character Location**: {current_location}
+
+## Decision
+Which event should take priority? Consider time sensitivity, reward value, and current activity.
+
+Respond ONLY with valid JSON:
+```json
+{{
+  "decision": "event_name" | "skip_all",
+  "reasoning": "Brief explanation",
+  "confidence": 0.0-1.0,
+  "priority_order": ["event1", "event2"]
+}}
+```

@@ -1,47 +1,117 @@
-﻿You are an AI module deciding whether to wait on current map or return to exp farm.
-
-Apply v5.8 anti-idle discipline first, then optimization.
+You are an AI making a strategic decision for a League of Angels - Haven's Fury bot: Should the bot wait on the current map for the next boss, or return to exp farm?
 
 ## Current Situation
-Current Boss: {current_boss}
-Next Boss: {next_boss}
-Time Until Next Spawn: {time_until_next} seconds
-Same Map: {same_map}
-Current Location: {current_location}
-Travel Time Between Maps: ~{travel_time} seconds
-Loot Collection Time: ~30 seconds
+
+**Current Boss**: {current_boss} (just killed or about to kill)
+**Next Boss**: {next_boss}
+**Time Until Next Spawn**: {time_until_next} seconds
+**Same Map**: {same_map}
 
 ## Historical Data
-Strategic Wait Success Rate: {historical_success_rate}%
-Average Time Saved: {avg_time_saved} seconds
-Times Chosen: {times_chosen}
-Historical Recommendation: {historical_recommendation}
 
-## v5.8 Idle Prevention Rules (MANDATORY)
-1. If time_until_next > 120, decision MUST be "return_to_farm".
-2. "wait" is allowed only if:
-   - same_map is true, AND
-   - time_until_next < 60.
-3. If same_map is false, prefer "return_to_farm" unless a hard safety override is provided (not expected in normal flow).
-4. When uncertain, choose "return_to_farm" (v5.8 no-idle policy).
+**Strategic Wait Success Rate**: {historical_success_rate}%
+**Average Time Saved When Successful**: {avg_time_saved} seconds
+**Times This Decision Made**: {times_chosen}
 
-## Reasoning Rule
-Reasoning must explicitly reference v5.8 optimization policy, such as:
-- "v5.8 idle prevention"
-- "v5.8 same-map short wait window"
-- "v5.8 no long idle in combat maps"
+## Decision Context
 
-## Response Format (STRICT JSON ONLY)
-Return only valid JSON:
-{
+**Travel Time Between Maps**: ~{travel_time} seconds
+**Loot Collection Time**: ~30 seconds
+**Current Location**: {current_location}
+
+## Strategic Analysis Required
+
+Waiting on the map is beneficial when:
+✅ Next boss spawns soon (<90 seconds)
+✅ Both bosses are on same map (no travel needed)
+✅ Historical success rate for this wait is >70%
+✅ Time saved > time lost from staying idle
+
+Returning to farm is better when:
+❌ Next boss spawns far in future (>120 seconds)
+❌ Bosses are on different maps (travel anyway)
+❌ Risk of death/disconnect while waiting
+❌ Better to farm exp than idle
+
+## Mathematical Optimization
+
+**Time Cost of Waiting**: {time_until_next} seconds idle
+**Time Cost of Returning**: ~{return_time} seconds travel + waiting
+
+**Break-even point**: If `time_until_next < (return_time + {travel_time})`, waiting is optimal.
+
+## Risk Factors
+
+Consider:
+- Boss might not spawn exactly on time (player interference, server lag)
+- Waiting in combat zone = risk of PvP death
+- Network disconnection during wait = position lost
+- Resource consumption (HP/MP) during idle
+
+## Response Format
+
+Respond ONLY with valid JSON:
+
+```json
+{{
   "decision": "wait" | "return_to_farm",
-  "reasoning": "math + v5.8 policy reference",
-  "confidence": 0.0,
-  "time_impact": "signed seconds string, e.g. +15 or -20",
+  "reasoning": "Mathematical/strategic explanation of choice",
+  "confidence": 0.0-1.0,
+  "time_impact": "Estimated time saved/lost in seconds (+positive = saved, -negative = lost)",
   "risk_assessment": "low" | "medium" | "high"
-}
+}}
+```
 
-## Hard Constraints
-- If time_until_next > 120 => decision must be "return_to_farm".
-- If decision is "wait" => same_map must be true and time_until_next < 60.
-- confidence must be 0.0-1.0.
+**Example 1 - Wait Decision:**
+
+```json
+{{
+  "decision": "wait",
+  "reasoning": "Next boss spawns in 45 seconds on same map. Return journey = 60+ seconds. Waiting saves ~15 seconds with low risk.",
+  "confidence": 0.8,
+  "time_impact": "+15",
+  "risk_assessment": "low"
+}}
+```
+
+**Example 2 - Return Decision:**
+
+```json
+{{
+  "decision": "return_to_farm",
+  "reasoning": "Next boss spawns in 150 seconds. Excessive idle time. Historical data shows only 60% success rate for long waits. Better to farm exp.",
+  "confidence": 0.75,
+  "time_impact": "+10",
+  "risk_assessment": "medium"
+}}
+```
+
+**Example 3 - Edge Case:**
+
+```json
+{{
+  "decision": "return_to_farm",
+  "reasoning": "Bosses on different maps (travel required anyway). Next spawn in 85 seconds. Close to break-even but historical success only 55%.",
+  "confidence": 0.65,
+  "time_impact": "0",
+  "risk_assessment": "medium"
+}}
+```
+
+## Decision Thresholds
+
+Use these guidelines:
+
+- `time_until_next < 60s` → **Strong Wait** (confidence 0.8+)
+- `60s < time_until_next < 90s` AND `same_map` → **Weak Wait** (confidence 0.6-0.7)
+- `time_until_next > 90s` → **Return** (confidence 0.7+)
+- `different maps` → **Generally Return** unless spawn <40s
+
+## Current Historical Performance
+
+Based on {times_chosen} previous decisions:
+- Success rate: {historical_success_rate}%
+- Average time impact: {avg_time_saved} seconds
+- Recommendation: {historical_recommendation}
+
+Analyze the situation and make your decision now.

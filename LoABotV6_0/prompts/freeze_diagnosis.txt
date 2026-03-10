@@ -1,0 +1,117 @@
+You are an AI diagnosing potential game freeze/crash situations for a League of Angels - Haven's Fury bot.
+
+## Situation
+
+The game screen has not changed for **{duration} seconds**.
+
+**Last Action**: {last_action}
+**Expected Result**: {expected_result}
+**Current Location**: {current_location}
+
+## Your Task
+
+Analyze the provided screenshot and determine:
+
+1. **Is the game actually frozen, or is this expected behavior?**
+   - Loading screens can take 5-15 seconds
+   - Matchmaking can take 30+ seconds
+   - Boss spawn waiting is intentional
+   - Network lag can cause temporary pauses
+
+2. **If frozen, what type of freeze is it?**
+   - **Loading**: Game is legitimately loading (wait)
+   - **Popup**: A popup dialog is blocking (close popup)
+   - **Stuck**: Character is stuck in terrain (teleport out)
+   - **Disconnect**: Network connection lost (reconnect)
+   - **Crashed**: Application hung (force restart)
+
+3. **What action should be taken?**
+
+## Visual Indicators
+
+Look for these clues in the screenshot:
+
+✅ **Not Frozen** (Wait):
+- Loading spinner visible
+- "Connecting..." text
+- Progress bar animating
+- Queue timer counting
+
+❌ **Frozen** (Action Needed):
+- UI completely unresponsive
+- No loading indicators
+- Static error message
+- Popup with OK button
+- Black/blank screen
+
+## Response Format
+
+Respond ONLY with valid JSON:
+
+```json
+{{
+  "is_frozen": true | false,
+  "freeze_type": "loading" | "popup" | "stuck" | "disconnect" | "crashed",
+  "recommended_action": "wait" | "close_popup" | "teleport" | "reconnect" | "restart",
+  "confidence": 0.0-1.0,
+  "visual_evidence": "What you see in the screenshot that supports this diagnosis",
+  "wait_time_seconds": 30
+}}
+```
+
+**Field Explanations:**
+
+- `is_frozen`: Is this actually a problem requiring intervention?
+- `freeze_type`: Category of issue
+- `recommended_action`: What the bot should do next
+- `confidence`: How certain you are (0.7+ needed for restart action)
+- `visual_evidence`: Describe specific visual clues
+- `wait_time_seconds`: If waiting, how long before rechecking?
+
+**Example 1 - Loading Screen:**
+
+```json
+{{
+  "is_frozen": false,
+  "freeze_type": "loading",
+  "recommended_action": "wait",
+  "confidence": 0.9,
+  "visual_evidence": "Loading spinner visible in center, 'Loading...' text at bottom. This appears to be a normal map transition.",
+  "wait_time_seconds": 15
+}}
+```
+
+**Example 2 - Actual Crash:**
+
+```json
+{{
+  "is_frozen": true,
+  "freeze_type": "crashed",
+  "recommended_action": "restart",
+  "confidence": 0.95,
+  "visual_evidence": "Screen is completely black with no UI elements. No loading indicators present. Application appears hung after {duration} seconds.",
+  "wait_time_seconds": 0
+}}
+```
+
+**Example 3 - Popup Blocking:**
+
+```json
+{{
+  "is_frozen": true,
+  "freeze_type": "popup",
+  "recommended_action": "close_popup",
+  "confidence": 0.85,
+  "visual_evidence": "Modal dialog visible with 'OK' button. Dialog says 'Network Error' or similar. Bot cannot proceed until popup is closed.",
+  "wait_time_seconds": 0
+}}
+```
+
+## Important Guidelines
+
+- **Be conservative with restarts**: Only recommend `restart` with confidence > 0.7
+- **Favor waiting for < 30 seconds**: Many operations legitimately take time
+- **Look for UI elements**: The presence of ANY UI suggests not crashed
+- **Context matters**: If last action was "enter_boss_map", a 10s load is normal
+
+Analyze the screenshot now and provide your diagnosis.

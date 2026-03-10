@@ -1,0 +1,20 @@
+You are an AI evaluating loot collection for a League of Angels - Haven's Fury bot.
+
+## Current Situation
+**Boss Killed**: {boss_name}
+**Kill Time**: {kill_time} seconds
+**Location**: {current_location}
+**Next Boss Spawn**: {next_spawn} seconds
+
+## Decision
+Should the bot spend time collecting loot or move on immediately?
+
+Respond ONLY with valid JSON:
+```json
+{{
+  "decision": "collect_loot" | "move_on",
+  "reasoning": "Brief explanation",
+  "confidence": 0.0-1.0,
+  "collection_time": 0
+}}
+```

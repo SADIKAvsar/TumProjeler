@@ -1,0 +1,518 @@
+_templates:
+
+  seq_common_ipucu_event: &seq_common_ipucu_event
+    - {action: click, wait_ms: 3000, label: tip}
+    - {action: click, label: ipucu, wait_ms: 300}
+    - {action: click, label: common_event_point,  wait_ms: 100}
+
+  seq_celestial_boss: &seq_celestial_boss
+    - {action: click, wait_ms: 3000, label: tip}
+    - {action: click, label: ipucu, wait_ms: 300}
+    - {action: click, label: CelestialBoss, wait_ms: 100}
+
+  seq_holly_grail: &seq_holly_grail
+    - {action: click, wait_ms: 3000, label: tip}
+    - {action: click, label: ipucu, wait_ms: 300}
+    - {action: click, label: holly_grail, wait_ms: 100}
+            
+  seq_cross_server_3v3: &seq_cross_server_3v3
+    - {action: click, wait_ms: 3000, label: tip}
+    - {action: click, label: ipucu, wait_ms: 300}
+    - {action: click, label: cross_server_3v3, wait_ms: 100}
+      
+  seq_ittifak_boss: &seq_ittifak_boss
+    - {action: click, wait_ms: 3000, label: tip}
+    - {action: click, label: ipucu, wait_ms: 300}
+    - {action: click, label: ittifak_boss, wait_ms: 100}
+      
+  seq_cehennem_sinirlari: &seq_cehennem_sinirlari
+    - {action: click, wait_ms: 3000, label: tip}
+    - {action: click, label: ipucu, wait_ms: 100}
+    - {action: click, label: cehennem_sinirlari,  wait_ms: 100}
+
+  seq_guild_war: &seq_guild_war
+    - {action: click, wait_ms: 3000, label: tip}
+    - {action: click, label: ipucu, wait_ms: 100}
+    - {action: click, label: common_event_point, wait_ms: 100}
+    - {action: click, label: ipucu, wait_ms: 100}
+    - {action: click, label: common_event_point, wait_ms: 100}
+    - {action: click, label: Guild_War_inside, wait_ms: 100}
+
+  seq_wild_lands: &seq_wild_lands
+    - {action: clcik, wait_ms: 3000, label: tip}
+    - {action: click, label: ipucu, wait_ms: 100}
+    - {action: click, label: wildboss_1_mage, wait_ms: 100}
+    - {action: click, label: wild_lands_challenge, wait_ms: 8000}
+    - {action: click, label: wildboss_2_blood, wait_ms: 100}
+    - {action: click, label: wild_lands_challenge, wait_ms: 8000}
+    - {action: click, label: wildboss_3_overlord, wait_ms: 100}
+    - {action: click, label: wild_lands_challenge, wait_ms: 8000}
+    - {action: click, label: wildboss_4_dragon, wait_ms: 100}
+    - {action: click, label: wild_lands_challenge, wait_ms: 8000}
+
+# ===================================================================
+# 1. GENEL MODÜL
+# ===================================================================
+module_general:
+  meta:
+    aciklama: Botun genel ayarları, oyun yolu, PVP, Popup, konum tespiti ve genel arayüz bölgeleri.
+    
+  game_path: C:\\Users\\Sadik\\AppData\\Local\\JuleGame\\LOA\\loa-hf-plugin.exe
+  process_name: loa-hf-plugin.exe
+  
+  settings:
+    LOG_LEVEL: DEBUG
+    ACTION_DELAY_SN: 0.1
+    GUI_UPDATE_INTERVAL_MS: 500
+    POST_ATTACK_WAIT_SN: 30
+    MAIN_LOOP_SLEEP_SN: 1.0
+    MOUSE_MOVE_DURATION_SN: 0.1
+    BOSS_SWITCH_THRESHOLD_SN: 91
+    URGENT_NEXT_BOSS_THRESHOLD_SN: 15
+    AREA_CHECK_TRIGGER_SN: 3.0
+    FAST_CHAIN_THRESHOLD_SN: 90
+    WALK_TIME_ENABLED: false
+    WALK_TIME_DISABLED_VALUE_SN: 0
+    WALK_TIME_DEFAULT_SN: 40
+    LOOT_COLLECTION_TIME_SN: 30
+    FREEZE_CHECK_INTERVAL_SN: 15
+    MAX_FREEZE_DURATION_SN: 60
+    EVENT_MONITOR_SLEEP_SEC: 60
+    EVENT_COMBAT_WAIT_SN: 60
+    # SEQUENTIAL_MAX_RAM_FRAMES: 600  # video sistemiyle gereksiz
+    LOCATION_SCAN_INTERVAL_SN: 30
+    GAME_UI_READY_DELAY_SN: 20
+    RESTART_AFTER_KILL_WAIT_SN: 1
+    RESTART_PRE_SERVER_SEARCH_WAIT_SN: 6
+    RESTART_FORCE_CLOSE_TOP_MENU: true
+    LOCATION_SCAN_AFTER_ACTION_WINDOW_SN: 30
+    LOCATION_IDLE_RECHECK_SN: 120 
+    LOCATION_FORCE_SCAN_INTERVAL_SN: 5
+    SPAWN_RECALC_MODE: fixed_cycle
+    ADJUST_OTHER_BOSS_TIMERS_FOR_LOOT: false
+    SPAWN_CONFIRM_ENABLED: true
+    SPAWN_CONFIRM_REQUIRED: false
+    SPAWN_CONFIRM_PRE_WINDOW_SN: 4
+    SPAWN_CONFIRM_TIMEOUT_SN: 3
+    SPAWN_CONFIRM_POLL_SN: 0.25
+    FREEZE_MOTION_EPSILON: 1.2
+    FREEZE_MAX_SAFE_RECOVERY_ATTEMPTS: 2
+    FREEZE_SAFE_RECOVERY_COOLDOWN_SN: 45
+    SCREEN_WIDTH: 2560
+    SCREEN_HEIGHT: 1440
+    YOLO_MODEL_PATH: yolov10n.pt
+    YOLO_DEVICE: cuda
+    YOLO_CLICK_CONF: 0.25
+    YOLO_CLICK_ROI_FIRST: true
+    YOLO_CLICK_FULL_FRAME_FALLBACK: false
+    YOLO_CLICK_ROI_HALF_W: 320
+    YOLO_CLICK_ROI_HALF_H: 220
+    HUMAN_LIKE_CLICK_ENABLED: false
+    SEQ_HUMAN_CLICK_DURATION: 0.10
+    SEQ_PERF_LOG_ENABLED: true
+    # ── Resim toplama (shadow mode) devre dışı — video sistemi aktif ──
+    SHADOW_MODE_ENABLED: false
+    SHADOW_DATA_ROOT: D:\\LoABot_Training_Data
+    SHADOW_JPEG_QUALITY: 92
+    SEQUENTIAL_RECORDER_ROOT: D:\\LoABot_Training_Data\\sequences
+    # SHADOW_QUEUE_MAXSIZE: 256          # video sistemiyle gereksiz
+    # SHADOW_WORKER_COUNT: 2             # video sistemiyle gereksiz
+    # SHADOW_SAVE_MIN_INTERVAL_SN: 0.15  # video sistemiyle gereksiz
+    # SHADOW_SAVE_ON_MISS: false         # video sistemiyle gereksiz
+    # SHADOW_MISS_MIN_INTERVAL_SN: 2.0   # video sistemiyle gereksiz
+    # SHADOW_SYSTEM_RUN_YOLO: false      # video sistemiyle gereksiz
+    # SHADOW_SYSTEM_CAPTURE_INTERVAL_SN: 1.0  # video sistemiyle gereksiz
+    # SHADOW_STARTUP_CAPTURE_ENABLED: false    # video sistemiyle gereksiz
+    # SHADOW_STARTUP_WAIT_CAPTURE_SN: 20.0    # video sistemiyle gereksiz
+    # SHADOW_BUFFER_RAM_GB: 32.0              # video sistemiyle gereksiz
+    MISSION_RECORDER_ENABLED: false
+    MISSION_CAPTURE_FPS: 1.0
+    MISSION_RUN_YOLO: false
+    # ── Video kayıt ayarları ──
+    VIDEO_RECORDER_ENABLED: true
+    VIDEO_RECORDER_ROOT: D:\\LoABot_Training_Data\\videos
+    VIDEO_RECORDER_FPS: 10
+    VIDEO_INPUT_COLOR_ORDER: BGR
+    MANUAL_VIDEO_CONTROL_ONLY: true
+    TRAINING_LOGGER_ENABLED: true
+    TRAINING_LOGGER_ROOT: D:\\LoABot_Training_Data\\AGENTIC_LOGS
+    TRAINING_LOGGER_QUEUE_MAXSIZE: 50000
+    LOCAL_AI_ENABLED: true
+    LOCAL_AI_OBSERVER_MODE: false
+    LOCAL_AI_MEMORY_PATH: D:\\LoABot_Training_Data\\runtime_data\\ai_memory.json
+    LOCAL_AI_HISTORY_PATH: D:\\LoABot_Training_Data\\runtime_data\\decision_history.jsonl
+    OLLAMA_ENABLED: true
+    OLLAMA_MODEL: qwen3-vl:4b
+    OLLAMA_BASE_URL: http://localhost:11434
+    OLLAMA_TIMEOUT_SEC: 20.0
+    OLLAMA_MIN_CONFIDENCE: 0.50
+    OLLAMA_NUM_GPU: 99
+    OLLAMA_VISION_ENABLED: true
+
+  recording:
+    # ── Eski resim-tabanlı kayıt (devre dışı — video sistemi yerine geçti) ──
+    sequential:
+      enabled: false
+      max_ram_frames: 150
+      jpeg_quality: 85
+      output_path: "D:/LoABot_Training_Data/Sequences"
+      flush_on_success_only: true
+
+    # ── YENİ: Video tabanlı eğitim verisi kaydı ──
+    video:
+      enabled: true
+      output_path: "D:/LoABot_Training_Data/videos"
+      fps: 10
+      input_color_order: "BGR"
+    
+  ui_regions:
+    region_full_screen: {x: 0, y: 0, w: 2560, h: 1440}
+    exit_map_area: {x: 2107, y: 311, w: 476, h: 621}
+    freeze_check_area: {x: 1077, y: 1033, w: 309, h: 904}
+    anchor_master_region: {x: 2226, y: 45, w: 361, h: 637}
+    region_popup_shared_area: {x: 558, y: 263, w: 1400, h: 893} 
+    region_ust_menu: {x: 1031, y: 68, w: 1229, h: 255}
+    region_katman_secim: {x: 555, y: 781, w: 359, h: 249}
+    region_boss_list: {x: 1650, y: 350, w: 100, h: 50}
+    region_genel_onay: {x: 1300, y: 800, w: 200, h: 100}
+    region_sol_menu: {x: 50, y: 150, w: 200, h: 200}
+    region_wild_lands_boss_list: {x: 594, y: 356, w: 1374, h: 786}
+    region_giris: {x: 1141, y: 700, w: 594, h: 241}
+    
+  PVP_DEFENSE:
+    enabled: false
+    check_interval_sn: 0.7
+    hp_orb_region: {x: 776, y: 1233, w: 221, h: 140}
+    hp_damaged_template: hp_damaged.png
+    hp_damage_confidence: 0.85
+    skill_rotation: ['4', '1', '2', '3', 'q', 'w']
+    
+  POPUP_MONITOR:
+    check_interval_sn: 20
+    check_interval_max_sn: 30
+    ready_check_interval_sn: 5
+    post_login_checks: 3
+    post_login_interval_sn: 3
+    region_key: region_popup_shared_area
+    popups_to_close:
+      - {image_file: popup_close_v3.png, confidence: 0.8}
+
+  locations:
+    UNKNOWN: {value: -1, anchor: null}
+    EXP_FARM: {value: 0, anchor: {image_file: exp_farm_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    KATMAN_1: {value: 1, anchor: {image_file: katman_1_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    KATMAN_2: {value: 2, anchor: {image_file: katman_2_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    CELESTIAL_BOSS: {value: 3, anchor: {image_file: celestial_boss_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    ITTIFAK_BOSS: {value: 4, anchor: {image_file: ittifak_boss_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    WILDLANDS: {value: 5, anchor: {image_file: wildlands_anchor1.png, confidence: 0.8, region_key: region_full_screen}}
+    CROSSERVER3v3ARENA: {value: 6, anchor: {image_file: crosserver_3_v_3_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    GUILD_WAR: {value: 7, anchor: {image_file: guild_war_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    IBLISSAVASI: {value: 8, anchor: {image_file: iblissavasi_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    DERINDENIZMUCADELESI: {value: 9, anchor: {image_file: derin_deniz_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    HOLLYGRAIL: {value: 10, anchor: {image_file: holly_grail_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    SORU_CEVAP: {value: 11, anchor: {image_file: soru_cevap_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    KATCIKMA: {value: 12, anchor: {image_file: kat_cikma_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    HORTLAKDIYARI: {value: 13, anchor: {image_file: hortlak_diyari_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    CEHENNEMSINIRLARI: {value: 14, anchor: {image_file: cehennem_sinirlari_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    ASTROLABE: {value: 15, anchor: {image_file: astrolabe_of_fate_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    WORLDBOSS: {value: 16, anchor: {image_file: world_boss_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    BOSSLAIR: {value: 17, anchor: {image_file: boss_lair_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    IVIDUALBOSS: {value: 18, anchor: {image_file: invidual_boss_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    XENOSPACE: {value: 19, anchor: {image_file: xeno_space_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    WILDLANDS_BOSS: {value: 20, anchor: {image_file: wildlands_boss_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    EXPINSTANCE: {value: 21, anchor: {image_file: exp_instance_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+    EXREMISCASTLE: {value: 22, anchor: {image_file: extremis_castle_anchor.png, confidence: 0.8, region_key: region_full_screen}}
+
+  exit_buttons:
+    KATMAN_1:
+      - {image_file: exit_map.png, region_key: region_full_screen, confidence: 0.8}
+    KATMAN_2:
+      - {image_file: exit_map.png, region_key: region_full_screen, confidence: 0.8}
+      
+  DEFAULT:
+    - {image_file: confirm.png, region_key: region_full_screen, confidence: 0.8}
+    - {image_file: exit_map.png, region_key: region_full_screen, confidence: 0.8}
+
+
+# ===================================================================
+# 2. DEMON BOSS MODÜLÜ
+# ===================================================================
+module_demon_boss:
+  meta:
+    aciklama: Demon Boss saldırı modülü için tüm veriler.
+    
+  # --- DÜZELTME: Tüm 'region_key'ler 'region_full_screen' oldu ---
+  coordinates:
+    server_s575: {x: 1400, y: 680, anchor: {image_file: server_s575.png, region_key: region_giris, confidence: 0.8}}
+    etkinlik_oku_open: {x: 2237, y: 98, anchor: {image_file: etkinlik_oku_open.png, region_key: region_ust_menu, confidence: 0.8}}
+    etkinlik_oku_close: {x: 2237, y: 98, anchor: {image_file: etkinlik_oku_close.png, region_key: region_ust_menu, confidence: 0.8}}        
+    demoon_buton: {x: 1649, y: 106, anchor: {image_file: demoon_buton_gorunur.png, region_key: region_ust_menu, confidence: 0.8}}
+    katman_1_secim: {x: 739, y: 847, anchor: {image_file: katman_1_gorunur.png, region_key: region_katman_secim, confidence: 0.8}}
+    katman_2_secim: {x: 740, y: 955, anchor: {image_file: katman_2_gorunur.png, region_key: region_katman_secim, confidence: 0.8}}
+    kata_gec: {x: 1848, y: 1078, anchor: {image_file: kata_gec_butonu.png, region_key: region_popup_shared_area, confidence: 0.8}}
+    tittle_tik: {x: 86, y: 203, anchor: {image_file: tittle_butonu.png, region_key: region_sol_menu, confidence: 0.8}}
+    ittifak_tik: {x: 265, y: 413, anchor: {image_file: ittifak_butonu.png, region_key: region_sol_menu, confidence: 0.8}}
+    boss_list_ac: {x: 2298, y: 444, anchor: {image_file: boss_list_butonu.png, region_key: anchor_master_region, confidence: 0.8}}
+    
+  sequence_template:
+    - {action: click, label: etkinlik_oku_open, wait_ms: 200} 
+    - {action: click, label: demoon_buton, wait_ms: 200}
+    - {action: katman_seçimi, wait_ms: 200} 
+    - {action: click, label: kata_gec, wait_ms: 4000}
+    - {action: click, label: tittle_tik, wait_ms: 200}
+    - {action: click, label: ittifak_tik, wait_ms: 200}
+    - {action: click, label: etkinlik_oku_close, wait_ms: 200}
+    - {action: click, label: boss_list_ac, wait_ms: 100}
+    - {action: boss_seçimi, wait_ms: 200}
+
+  victory_check_defaults:
+    region_key: region_full_screen
+    confidence: 0.40
+    timeout_sn: 1.5
+    poll_interval_sn: 0.05
+    required: false
+
+  spawn_check_defaults:
+    enabled: true
+    required: false
+    region_key: region_full_screen
+    confidence: 0.70
+    pre_window_sn: 2.0
+    timeout_sn: 1.5
+    poll_interval_sn: 0.05
+
+  bosslar:
+    '800': {katman_id: katman_1_secim, boss_id: 800, head_start_saniye: 50, periyot_saat: 1.0, koordinat_ref: {x: 2342, y: 479}, anchor: {image_file: boss_800_anchor.png, region_key: region_full_screen, confidence: 0.85}, area_check: {image_file: 800_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 800GoldenStrangeBeast.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_800.png, region_key: region_full_screen, confidence: 0.4}}
+
+    '820': {katman_id: katman_1_secim, boss_id: 820, head_start_saniye: 60, periyot_saat: 1.5, koordinat_ref: {x: 2333, y: 518}, anchor: {image_file: boss_820_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 820_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 820GoldenAdviser.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_820.png, region_key: region_full_screen, confidence: 0.4}}
+
+    '840': {katman_id: katman_1_secim, boss_id: 840, head_start_saniye: 75, periyot_saat: 2.0, koordinat_ref: {x: 2342, y: 556}, anchor: {image_file: boss_840_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 840_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 840GoldenBlazingBeast.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_840.png, region_key: region_full_screen, confidence: 0.4}}
+
+    '860': {katman_id: katman_1_secim, boss_id: 860, head_start_saniye: 100, periyot_saat: 2.5, koordinat_ref: {x: 2326, y: 599}, anchor: {image_file: boss_860_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 860_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 860GoldenCancer.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_860.png, region_key: region_full_screen, confidence: 0.4}}
+
+    '880': {katman_id: katman_1_secim, boss_id: 880, head_start_saniye: 115, periyot_saat: 3.0, koordinat_ref: {x: 2326, y: 635}, anchor: {image_file: boss_880_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 880_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 880GoldenEmpress.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_880.png, region_key: region_full_screen, confidence: 0.4}}
+
+    '900': {katman_id: katman_2_secim, boss_id: 900, head_start_saniye: 50, periyot_saat: 1.0, koordinat_ref: {x: 2328, y: 479}, anchor: {image_file: boss_900_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 900_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 900GoldenMagican.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_900.png, region_key: region_full_screen, confidence: 0.4}}
+
+    '920': {katman_id: katman_2_secim, boss_id: 920, head_start_saniye: 60, periyot_saat: 1.5, koordinat_ref: {x: 2313, y: 520}, anchor: {image_file: boss_920_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 920_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 920GoldenZeus.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_920.png, region_key: region_full_screen, confidence: 0.4}}
+
+    '940': {katman_id: katman_2_secim, boss_id: 940, head_start_saniye: 75, periyot_saat: 2.0, koordinat_ref: {x: 2337, y: 558}, anchor: {image_file: boss_940_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 940_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 940GoldenDemonLord.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_940.png, region_key: region_full_screen, confidence: 0.4}}
+
+    '960': {katman_id: katman_2_secim, boss_id: 960, head_start_saniye: 100, periyot_saat: 2.5, koordinat_ref: {x: 2342, y: 596}, anchor: {image_file: boss_960_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 960_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 960GoldenThunderGod.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_960.png, region_key: region_full_screen, confidence: 0.4}}
+
+    '980': {katman_id: katman_2_secim, boss_id: 980, head_start_saniye: 115, periyot_saat: 3.0, koordinat_ref: {x: 2310, y: 634}, anchor: {image_file: boss_980_anchor.png, region_key: anchor_master_region, confidence: 0.8}, area_check: {image_file: 980_area_check.png, region_key: anchor_master_region, confidence: 0.8}, spawn_check: {image_file: 980GoldenMagican.png, region_key: region_full_screen, confidence: 0.5}, victory: {image_file: victory_980.png, region_key: region_full_screen, confidence: 0.4}}
+
+  walk_times:
+    '800': {'820': 20, '840': 35, '860': 60, '880': 75}
+    '820': {'800': 20, '840': 16, '860': 50, '880': 60}
+    '840': {'800': 35, '820': 16, '860': 40, '880': 50}
+    '860': {'800': 60, '820': 45, '840': 40, '880': 20}
+    '880': {'800': 75, '820': 60, '840': 50, '860': 20}
+    '900': {'920': 20, '940': 35, '960': 60, '980': 75}
+    '920': {'900': 20, '940': 16, '960': 50, '980': 60}
+    '940': {'900': 35, '920': 16, '960': 40, '980': 32}
+    '960': {'900': 60, '920': 30, '940': 40, '980': 20}
+    '980': {'900': 75, '920': 45, '940': 50, '960': 75}
+
+
+# ===================================================================
+# 3. ZAMANLI ETKİNLİKLER MODÜLÜ
+# ===================================================================
+module_timed_events:
+    
+  coordinates:
+
+    ipucu: {x: 2189, y: 512}
+    CelestialBoss: {x: 1754, y: 1053, anchor: {image_file: go_to_challange.png, region_key: region_popup_shared_area, confidence: 0.8}}
+    common_event_point: {x: 1278, y: 1035, anchor: {image_file: common_event_point.png, region_key: region_full_screen, confidence: 0.8}}
+    holly_grail: {x: 1885, y: 1078}
+    cross_server_3v3: {x: 1989, y: 1118, anchor: {image_file:cross_server_3v3.png, region_key: region_full_screen, confidence: 0.8}}
+    ittifak_boss: {x: 1846, y: 1088}
+    cehennem_sinirlari: {x: 1867, y: 916}
+    hortlak_diyari: {x: 1867, y: 978}
+    hortlak_diyari_giris_sonrasi: {x: 1767, y: 526}
+    soru_cevap: {x: 1675, y: 259}
+
+    wildboss_1_mage: {x: 754, y: 479, anchor: {image_file: dark_descent_mage_canli.png, region_key: region_wild_lands_boss_list, confidence: 0.8}}
+    wildboss_2_blood: {x: 736, y: 628, anchor: {image_file: Bloodthirsty_canli.png, region_key: region_wild_lands_boss_list, confidence: 0.8}}
+    wildboss_3_overlord: {x: 738, y: 778, anchor: {image_file: DeepSeaOverlord_Canli.png, region_key: region_wild_lands_boss_list, confidence: 0.8}}
+    wildboss_4_dragon: {x: 725, y: 931, anchor: {image_file: BlueFrostDragon_Canli.png, region_key: region_wild_lands_boss_list, confidence: 0.8}}
+    wild_lands_challenge: {x: 1770, y: 1041, anchor: {image_file: wild_lands_challenge.png, region_key: region_wild_lands_boss_list, confidence: 0.8}}
+
+    etkinlik_oku_open: {x: 2237, y: 98, anchor: {image_file: etkinlik_oku_open.png, region_key: region_full_screen, confidence: 0.8}}
+    etkinlik_oku_close: {x: 2237, y: 98, anchor: {image_file: etkinlik_oku_close.png, region_key: region_full_screen, confidence: 0.8}}
+    leaderloby_button: {x: 2175, y: 146, anchor: {image_file: leaderloby_button.png, region_key: region_full_screen, confidence: 0.8}}
+    xeno_space_buton: { x: 1745, y: 334, anchor: {image_file: xeno_space_buton.png, region_key: region_full_screen, confidence: 0.8}}
+    extremis_castle_challenge: {x: 1734, y: 1082, anchor: {image_file: extremis_castle_challenge.png, region_key: region_full_screen, confidence: 0.8}}
+    ileri_tik: { x: 1276, y: 108, anchor: {image_file: ileri_tik.png, region_key: region_full_screen, confidence: 0.8}}
+    Guild_War_inside: {x: 1880, y: 368, anchor: {image_file: guild_war_inside.png, region_key: region_full_screen, confidence: 0.8}}
+    tip: {x: 1279, y: 847, anchor: {image_file: tip.png, region_key: region_full_screen, confidence: 0.8}}
+
+  events:
+    - name: Wild Lands (10:30)
+      days: null
+      start_time: '10:30'
+      end_time: '10:32' 
+      location_name_on_enter: WILDLANDS_BOSS
+      action_sequence: *seq_wild_lands                
+      auto_exits: true               
+
+    - name: Wild Lands (14:30)
+      days: null
+      start_time: '14:30'
+      end_time: '14:32'
+      location_name_on_enter: WILDLANDS_BOSS
+      action_sequence: *seq_wild_lands               
+      auto_exits: true               
+
+    - name: Wild Lands (18:30)
+      days: null
+      start_time: '18:30'
+      end_time: '18:32'
+      location_name_on_enter: WILDLANDS_BOSS
+      action_sequence: *seq_wild_lands                
+      auto_exits: true               
+
+    - name: Wild Lands (22:30)
+      days: null
+      start_time: '22:30'
+      end_time: '22:32'
+      location_name_on_enter: WILDLANDS_BOSS
+      action_sequence: *seq_wild_lands              
+      auto_exits: true               
+
+    - name: Celestial Boss (12:00)
+      days: null
+      start_time: '12:00'
+      end_time: '12:02'
+      location_name_on_enter: CELESTIAL_BOSS
+      action_sequence: *seq_celestial_boss
+      auto_exits: true
+
+    - name: Extremis Castle (11:30)
+      days: [1, 2, 3, 4, 5, 6]
+      start_time: '11:30'
+      end_time: '11:35'
+      location_name_on_enter: EXTREMISCASTLE
+      action_sequence: 
+        - {action: click, label: etkinlik_oku_open, wait_ms: 100}
+        - {action: click, label: leaderloby_button, wait_ms: 100}
+        - {action: click, label: etkinlik_oku_close, wait_ms: 100}
+        - {action: click, label: xeno_space_buton, wait_ms: 100}
+        - {action: click, label: extremis_castle_challenge, wait_ms: 300}
+        - {action: click, label: ileri_tik, wait_ms: 100}
+        - {action: press_key, key: 'q', wait_ms: 100}
+        - {action: click, label: ileri_tik, wait_ms: 100}
+        - {action: press_key, key: 'q', wait_ms: 100}
+        - {action: press_key, key: 'z', wait_ms: 100}
+      auto_exits: true
+
+    - name: Extremis Castle (15:00)
+      days: [1, 2, 3, 4, 5, 6]
+      start_time: '15:00'
+      end_time: '15:05'
+      location_name_on_enter: EXTREMISCASTLE
+      action_sequence: 
+        - {action: click, label: etkinlik_oku_open, wait_ms: 100}
+        - {action: click, label: leaderloby_button, wait_ms: 100}
+        - {action: click, label: etkinlik_oku_close, wait_ms: 100}
+        - {action: click, label: xeno_space_buton, wait_ms: 100}
+        - {action: click, label: extremis_castle_challenge, wait_ms: 300}
+        - {action: click, label: ileri_tik, wait_ms: 100}
+        - {action: click, label: ileri_tik, wait_ms: 100}
+        - {action: press_key, key: 'z', wait_ms: 100}
+      auto_exits: true
+
+    - name: Soru-Cevap
+      days: null
+      start_time: '14:00'
+      end_time: '14:20'
+      location_name_on_enter: SORU_CEVAP
+      action_sequence:
+        - {action: click, label: ipucu, wait_ms: 100}
+        - {action: click, label: soru_cevap, wait_ms: 100}
+      auto_exits: true
+
+    - name: Kat Çıkma
+      days: null
+      start_time: '16:00'
+      end_time: '16:20'
+      location_name_on_enter: KATCIKMA 
+      action_sequence: *seq_common_ipucu_event
+      auto_exits: true
+      
+    - name: Derin Deniz
+      days: null
+      start_time: '16:30'
+      end_time: '16:50'
+      location_name_on_enter: DERINDENIZMUCADELESI
+      action_sequence: *seq_common_ipucu_event
+      auto_exits: true
+      
+    - name: İblis Savaş Alanı
+      days: null
+      start_time: '19:00'
+      end_time: '19:20'
+      location_name_on_enter: IBLISSAVASI
+      action_sequence: *seq_common_ipucu_event
+      auto_exits: true
+
+    - name: Celestial Boss (18:00)
+      days: null
+      start_time: '18:00'
+      end_time: '18:02'
+      location_name_on_enter: CELESTIAL_BOSS
+      action_sequence: *seq_celestial_boss
+      auto_exits: true
+      
+    - name: Holly Grail
+      days: [2, 5] 
+      start_time: '20:30'
+      end_time: '20:50'
+      location_name_on_enter: HOLLYGRAIL
+      action_sequence: *seq_holly_grail
+      auto_exits: true
+      
+    - name: Cross Server 3v3
+      days: [0, 2, 4, 6] 
+      start_time: '21:00'
+      end_time: '21:20'
+      location_name_on_enter: CROSSERVER3v3ARENA
+      action_sequence: *seq_cross_server_3v3
+      auto_exits: true
+      
+    - name: İttifak Boss
+      days: null
+      start_time: '19:30'
+      end_time: '19:32'
+      location_name_on_enter: ITTIFAK_BOSS
+      action_sequence: *seq_ittifak_boss
+      auto_exits: true
+      
+    - name: Cehennem Sınırları
+      days: [2, 5]
+      start_time: '17:00'
+      end_time: '17:45'
+      location_name_on_enter: CEHENNEMSINIRLARI
+      action_sequence: *seq_cehennem_sinirlari
+      auto_exits: true
+      
+    - name: Ittifak Savasi
+      days: [6]
+      start_time: '20:00'
+      end_time: '20:15'
+      location_name_on_enter: GUILD_WAR
+      action_sequence: *seq_guild_war
+      auto_exits: true
+
+    - name: Hortlak Diyarı
+      days: [0, 1, 2, 3, 4, 5]
+      start_time: '20:00'
+      end_time: '20:30'
+      location_name_on_enter: HORTLAKDIYARI 
+      action_sequence: 
+        - {action: click, label: ipucu, wait_ms: 100}
+        - {action: click, label: hortlak_diyari, wait_ms: 100}
+        - {action: click, label: hortlak_diyari_giris_sonrasi, wait_ms: 100}
+        - {action: press_key, key: 'z', wait_ms: 100}
+      auto_exits: true
