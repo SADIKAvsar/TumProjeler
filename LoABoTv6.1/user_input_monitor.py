@@ -360,6 +360,12 @@ class UserInputMonitor:
                     with self._lock:
                         self._last_bot_input_ts = now
                 else:
+                    # v6.1: TÜM insan tıklamalarını eğitim verisine (JSONL) kaydet
+                    self.bot.log_training_action(
+                        "mouse_click",
+                        {"source": "human", "x": int(x), "y": int(y), "button": str(btn_name)},
+                    )
+
                     is_intervention, reason, idle_s = self._evaluate_user_intervention(now, phase)
                     event_data["is_intervention"] = bool(is_intervention)
                     if is_intervention:

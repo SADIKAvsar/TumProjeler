@@ -380,10 +380,14 @@ class BossManager:
             {"boss_id": str(target.get("aciklama", "unknown")), "success": bool(kill_ok), "reason": "flex_scan"},
         )
 
-        # â˜… FIX: Boss sabit periyotla respawn eder â€” baÅŸarÄ±lÄ±/baÅŸarÄ±sÄ±z fark etmez.
-        # recalculate_times her zaman Ã§aÄŸrÄ±lmalÄ±; catch-up mantÄ±ÄŸÄ± stale
-        # spawn_time'Ä± da otomatik olarak ileriye taÅŸÄ±r.
-        self.bot.combat.recalculate_times(target, attack_start)
+        # ★ FIX (Baş Mühendis): Boss'un yeni doğuş süresi (Respawn), 
+        # doğduğu (spawn) anına göre değil, ÖLDÜĞÜ (Victory) anına göre hesaplanmalıdır.
+        if kill_ok:
+            # Boss başarıyla kesildi! Süreyi tam şu ana (Ölüm anı) göre hesapla.
+            self.bot.combat.recalculate_times(target, time.time())
+        else:
+            # Başarısız olduysa, sonsuz döngüden kurtulmak için eski teorik zamana göre ileri sar.
+            self.bot.combat.recalculate_times(target, attack_start)
 
         ai_engine = getattr(getattr(self.bot, "brain", None), "ai_engine", None)
         memory = getattr(ai_engine, "memory", None)
@@ -438,7 +442,8 @@ class BossManager:
         victory_cfg = self.bot.combat._resolve_victory_check(target)
 
         area_image   = area_data.get("image_file", "")
-        area_conf    = float(area_data.get("confidence", 0.70))
+        # v6.1: UI kapanma halüsinasyonunu önlemek için minimum %85 eşik zorla
+        area_conf    = max(float(area_data.get("confidence", 0.70)), 0.85)
 
         spawn_images  = spawn_cfg.get("image_files", [])
         spawn_conf    = float(spawn_cfg.get("confidence", 0.60))
@@ -463,7 +468,19 @@ class BossManager:
 
         target["_area_check_ok"] = False
 
-        # T-PRE anÄ±na kadar bekle 
+        # ── v6.1: Kör Uçuş (Grace Period) ──────────────────────────
+        # Navigasyon başladıktan sonra UI menüleri (boss listesi, katman
+        # seçimi vb.) kapanması ~2-3 saniye sürer. Bu süre içinde ekran
+        # taraması yapmak UI yazısını area olarak algılama riski taşır
+        # (False Positive). Bot ilk 3 saniye ekrana bakmaz.
+        _grace_sn = float(self.settings.get("NAV_AREA_GRACE_PERIOD_SN", 3.0))
+        self.bot.log(
+            f"[FlexScan] Kor ucus: {_grace_sn:.1f}s (UI kapanma bekleme)",
+            level="DEBUG",
+        )
+        time.sleep(_grace_sn)
+
+        # T-PRE anina kadar bekle 
         wait_pre = window_open_ts - time.time()
         if wait_pre > 0:
             self.bot.log(f"[NAV_PULSE] Spawn oncesi bekleme nabiz kontrolune alindi: {wait_pre:.1f}s", level="DEBUG")
